@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>منصة الاتصال الصوتي بالذكاء الاصطناعي</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+        
+        .container {
+            text-align: center;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            max-width: 600px;
+            margin: 20px;
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .emoji {
+            font-size: 4em;
+            margin: 20px 0;
+        }
+        
+        p {
+            font-size: 1.2em;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+        
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .feature {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 10px;
+            transition: transform 0.3s;
+        }
+        
+        .feature:hover {
+            transform: translateY(-5px);
+        }
+        
+        .feature-icon {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            display: inline-block;
+            margin-top: 20px;
+        }
+        
+        .phone-number {
+            font-size: 1.5em;
+            margin: 20px 0;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+        }
+        
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 1.8em;
+            }
+            .features {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="emoji">🤖📞</div>
+        <h1>منصة الاتصال الصوتي بالذكاء الاصطناعي</h1>
+        <p>نظام ذكي للرد على المكالمات الهاتفية بـ 9 لغات مختلفة</p>
+        
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">🌍</div>
+                <div>9 لغات</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">⚡</div>
+                <div>رد فوري</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">💾</div>
+                <div>حفظ المحادثات</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">📊</div>
+                <div>تحليلات ذكية</div>
+            </div>
+        </div>
+        
+        <div class="phone-number">
+            📱 اتصل على: <strong id="phoneNumber">جاري التحميل...</strong>
+        </div>
+        
+        <div class="status">
+            ✅ النظام يعمل بكفاءة 100%
+        </div>
+    </div>
+    
+    <script>
+        // جلب رقم الهاتف من الخادم
+        fetch('/api/info')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('phoneNumber').textContent = 
+                    data.phoneNumber || '+966 50 123 4567';
+            })
+            .catch(() => {
+                document.getElementById('phoneNumber').textContent = '+966 50 123 4567';
+            });
+    </script>
+</body>
+</html>
