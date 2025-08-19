@@ -302,7 +302,7 @@ app.post('/api/voice/incoming', async (req, res) => {
 });
 
 // ====================================
-// معالجة التسجيل - محسّن
+// معالجة التسجيل - محسّن مع تأخير وإعادة محاولة
 // ====================================
 app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     const { conversationId } = req.params;
@@ -318,85 +318,111 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     
     try {
         let transcribedText = '';
-        let detectedLanguage = 'en';
+        let detectedLanguage = 'ar'; // افتراضي: العربية
+        
+        // تأخير قصير للسماح لـ Twilio بمعالجة التسجيل
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         // محاولة استخدام OpenAI Whisper
         if (openai && RecordingUrl) {
-            try {
-                // تحميل الصوت من Twilio مع إضافة .mp3
-                const audioUrl = RecordingUrl.endsWith('.mp3') ? RecordingUrl : `${RecordingUrl}.mp3`;
-                console.log('📥 تحميل الصوت من:', audioUrl);
-                
-                const audioResponse = await axios.get(audioUrl, {
-                    responseType: 'arraybuffer',
-                    auth: {
-                        username: config.twilioAccountSid,
-                        password: config.twilioAuthToken
-                    }
-                });
-                
-                // تحويل لـ Buffer
-                const audioBuffer = Buffer.from(audioResponse.data);
-                
-                // إنشاء Blob للـ Whisper API
-                const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
-                
-                console.log('🎯 استخدام OpenAI Whisper...');
-                
-                // استخدام Whisper - محاولة بالعربية أولاً
+            let audioBuffer = null;
+            
+            // محاولة تحميل الصوت مع إعادة المحاولة
+            for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                    const formData = new FormData();
-                    formData.append('file', audioBlob, 'audio.mp3');
-                    formData.append('model', 'whisper-1');
-                    formData.append('language', 'ar');
+                    const audioUrl = `${RecordingUrl}.mp3`;
+                    console.log(`📥 محاولة ${attempt}: تحميل من ${audioUrl}`);
                     
-                    const whisperResponse = await axios.post(
-                        'https://api.openai.com/v1/audio/transcriptions',
-                        formData,
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${config.openaiApiKey}`,
-                                ...formData.getHeaders?.() || {}
-                            }
-                        }
-                    );
+                    const audioResponse = await axios.get(audioUrl, {
+                        responseType: 'arraybuffer',
+                        auth: {
+                            username: config.twilioAccountSid,
+                            password: config.twilioAuthToken
+                        },
+                        timeout: 5000
+                    });
                     
-                    transcribedText = whisperResponse.data.text;
-                    detectedLanguage = 'ar';
-                    console.log(`✅ Whisper نتيجة بالعربية: "${transcribedText}"`);
+                    audioBuffer = Buffer.from(audioResponse.data);
+                    console.log(`✅ تم تحميل الصوت (${audioBuffer.length} bytes)`);
+                    break;
                     
-                } catch (arabicError) {
-                    console.log('⚠️ محاولة بالإنجليزية...');
-                    
-                    // محاولة بالإنجليزية
-                    const formData = new FormData();
-                    formData.append('file', audioBlob, 'audio.mp3');
-                    formData.append('model', 'whisper-1');
-                    
-                    const whisperResponse = await axios.post(
-                        'https://api.openai.com/v1/audio/transcriptions',
-                        formData,
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${config.openaiApiKey}`,
-                                ...formData.getHeaders?.() || {}
-                            }
-                        }
-                    );
-                    
-                    transcribedText = whisperResponse.data.text;
-                    detectedLanguage = 'en';
-                    console.log(`✅ Whisper نتيجة بالإنجليزية: "${transcribedText}"`);
+                } catch (downloadError) {
+                    console.log(`⚠️ محاولة ${attempt} فشلت: ${downloadError.message}`);
+                    if (attempt < 3) {
+                        await new Promise(resolve => setTimeout(resolve, 1500));
+                    }
                 }
-                
-            } catch (whisperError) {
-                console.error('❌ خطأ Whisper:', whisperError.message);
-                // استخدام نص افتراضي
-                transcribedText = conversation.messages.length === 0 ? 'مرحبا' : 'نعم';
             }
-        } else {
-            // بدون OpenAI - استخدام نص افتراضي
-            transcribedText = conversation.messages.length === 0 ? 'مرحبا' : 'نعم';
+            
+            // إذا نجح التحميل، استخدم Whisper
+            if (audioBuffer && audioBuffer.length > 0) {
+                try {
+                    console.log('🎯 استخدام OpenAI Whisper...');
+                    
+                    // استخدام FormData الصحيح
+                    const FormData = require('form-data');
+                    const formData = new FormData();
+                    formData.append('file', audioBuffer, {
+                        filename: 'audio.mp3',
+                        contentType: 'audio/mpeg'
+                    });
+                    formData.append('model', 'whisper-1');
+                    
+                    // محاولة بدون تحديد اللغة (للكشف التلقائي)
+                    const whisperResponse = await axios.post(
+                        'https://api.openai.com/v1/audio/transcriptions',
+                        formData,
+                        {
+                            headers: {
+                                'Authorization': `Bearer ${config.openaiApiKey}`,
+                                ...formData.getHeaders()
+                            },
+                            maxBodyLength: Infinity,
+                            maxContentLength: Infinity
+                        }
+                    );
+                    
+                    transcribedText = whisperResponse.data.text || '';
+                    
+                    // كشف اللغة من النص
+                    const arabicPattern = /[\u0600-\u06FF]/;
+                    detectedLanguage = arabicPattern.test(transcribedText) ? 'ar' : 'en';
+                    
+                    console.log(`✅ Whisper نتيجة: "${transcribedText}" [${detectedLanguage}]`);
+                    
+                } catch (whisperError) {
+                    console.error('❌ خطأ Whisper API:', whisperError.response?.data || whisperError.message);
+                }
+            }
+        }
+        
+        // إذا لم نحصل على نص من Whisper، استخدم Twilio Transcription
+        if (!transcribedText || transcribedText.trim() === '') {
+            console.log('⚠️ استخدام النص الافتراضي...');
+            
+            // محاولة الحصول على النص من Twilio
+            if (RecordingSid) {
+                try {
+                    const twilioClient = twilio(config.twilioAccountSid, config.twilioAuthToken);
+                    const transcriptions = await twilioClient.transcriptions.list({
+                        recordingSid: RecordingSid,
+                        limit: 1
+                    });
+                    
+                    if (transcriptions.length > 0) {
+                        transcribedText = transcriptions[0].transcriptionText || '';
+                        console.log(`📝 Twilio transcription: "${transcribedText}"`);
+                    }
+                } catch (twilioError) {
+                    console.log('⚠️ لا يوجد Twilio transcription');
+                }
+            }
+            
+            // النص الافتراضي النهائي
+            if (!transcribedText) {
+                transcribedText = conversation.messages.length === 0 ? 
+                    'مرحبا' : 'نعم، أريد المساعدة';
+            }
         }
         
         // معالجة النص
@@ -410,23 +436,44 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     } catch (error) {
         console.error('❌ خطأ في معالجة التسجيل:', error);
         
+        // رد افتراضي في حالة الخطأ
         const twiml = new twilio.twiml.VoiceResponse();
         twiml.say({
             voice: 'Polly.Zeina',
             language: 'arb'
-        }, 'عذراً، لم أفهم. حاول مرة أخرى.');
+        }, 'عذراً، لم أفهم. هل يمكنك التحدث مرة أخرى؟');
         
         twiml.record({
             action: `/api/voice/process-recording/${conversationId}`,
             method: 'POST',
             maxLength: 15,
             timeout: 3,
-            playBeep: false
+            playBeep: false,
+            transcribe: true,
+            transcribeCallback: `/api/voice/transcription/${conversationId}`
         });
         
         res.type('text/xml');
         res.send(twiml.toString());
     }
+});
+
+// ====================================
+// معالجة Twilio Transcription Callback
+// ====================================
+app.post('/api/voice/transcription/:conversationId', async (req, res) => {
+    const { conversationId } = req.params;
+    const { TranscriptionText, TranscriptionStatus } = req.body;
+    
+    console.log(`📝 Twilio Transcription: "${TranscriptionText}" [${TranscriptionStatus}]`);
+    
+    // حفظ النص في المحادثة للمراجع المستقبلية
+    const conversation = conversations.get(conversationId);
+    if (conversation) {
+        conversation.lastTranscription = TranscriptionText;
+    }
+    
+    res.status(200).send('OK');
 });
 
 // ====================================
