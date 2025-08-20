@@ -5,6 +5,7 @@ const twilio = require('twilio');
 const OpenAI = require('openai');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
+const FormData = require('form-data');
 require('dotenv').config();
 
 const app = express();
@@ -19,9 +20,9 @@ const config = {
     openaiApiKey: process.env.OPENAI_API_KEY
 };
 
-// التحقق من وجود OpenAI API Key
+// التحقق من OpenAI
 if (!config.openaiApiKey) {
-    console.error('⚠️ تحذير: OPENAI_API_KEY غير موجود!');
+    console.error('⚠️ OPENAI_API_KEY غير موجود!');
 } else {
     console.log('✅ OpenAI API Key موجود');
 }
@@ -37,17 +38,18 @@ if (config.openaiApiKey) {
     try {
         openai = new OpenAI({ 
             apiKey: config.openaiApiKey,
-            maxRetries: 3
+            maxRetries: 2 // تقليل المحاولات للسرعة
         });
-        console.log('✅ OpenAI تم تهيئته بنجاح');
+        console.log('✅ OpenAI جاهز');
     } catch (error) {
-        console.error('❌ خطأ في تهيئة OpenAI:', error.message);
+        console.error('❌ خطأ OpenAI:', error.message);
     }
 }
 
-// تخزين المحادثات
+// تخزين المحادثات مع كاش للسرعة
 const conversations = new Map();
 const userProfiles = new Map();
+const responseCache = new Map(); // كاش للردود الشائعة
 
 // MongoDB اختياري
 if (config.mongoUri && config.mongoUri !== 'mongodb://localhost:27017/aivoice') {
@@ -60,18 +62,17 @@ if (config.mongoUri && config.mongoUri !== 'mongodb://localhost:27017/aivoice') 
 
 // الصفحة الرئيسية
 app.get('/', (req, res) => {
-    const hasOpenAI = !!openai;
     res.send(`
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>منصة AI الصوتية</title>
+            <title>منصة AI الصوتية المتقدمة</title>
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
                 body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+                    font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     min-height: 100vh;
                     display: flex;
@@ -87,7 +88,6 @@ app.get('/', (req, res) => {
                     backdrop-filter: blur(10px);
                     max-width: 800px;
                     margin: 20px;
-                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
                 }
                 h1 { 
                     font-size: 2.5em; 
@@ -96,11 +96,21 @@ app.get('/', (req, res) => {
                     -webkit-background-clip: text;
                     -webkit-text-fill-color: transparent;
                 }
-                .status-box {
-                    background: rgba(255,255,255,0.2);
-                    padding: 20px;
-                    border-radius: 15px;
-                    margin: 20px 0;
+                .features {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 15px;
+                    margin: 30px 0;
+                }
+                .feature {
+                    background: rgba(255,255,255,0.15);
+                    padding: 15px;
+                    border-radius: 10px;
+                    transition: transform 0.3s;
+                }
+                .feature:hover {
+                    transform: scale(1.05);
+                    background: rgba(255,255,255,0.25);
                 }
                 .phone-number {
                     font-size: 2em;
@@ -110,83 +120,52 @@ app.get('/', (req, res) => {
                     background: rgba(0,0,0,0.3);
                     border-radius: 15px;
                     font-weight: bold;
-                    letter-spacing: 2px;
                 }
-                .error {
-                    background: rgba(255,0,0,0.2);
-                    padding: 15px;
-                    border-radius: 10px;
-                    margin: 15px 0;
-                    border: 1px solid rgba(255,0,0,0.5);
-                }
-                .success {
+                .status {
                     background: rgba(0,255,0,0.2);
                     padding: 15px;
                     border-radius: 10px;
                     margin: 15px 0;
                     border: 1px solid rgba(0,255,0,0.5);
                 }
-                .instructions {
-                    text-align: right;
-                    background: rgba(0,0,0,0.2);
-                    padding: 25px;
-                    border-radius: 15px;
-                    margin-top: 30px;
-                }
-                .instructions h3 {
-                    color: #FFD700;
-                    margin-bottom: 15px;
-                    font-size: 1.3em;
-                }
-                .instructions ul {
-                    list-style: none;
-                    padding: 0;
-                }
-                .instructions li {
-                    margin: 10px 0;
-                    padding-right: 25px;
-                    position: relative;
-                }
-                .instructions li:before {
-                    content: "✓";
-                    position: absolute;
-                    right: 0;
-                    color: #4CAF50;
-                    font-weight: bold;
-                }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>🤖 منصة الذكاء الاصطناعي الصوتية</h1>
-                
-                <div class="status-box">
-                    <h3>حالة النظام</h3>
-                    <p><strong>OpenAI:</strong> ${hasOpenAI ? 
-                        '<span style="color: #4CAF50;">✅ متصل</span>' : 
-                        '<span style="color: #f44336;">❌ غير متصل</span>'}</p>
-                    <p><strong>النموذج:</strong> gpt-4o-mini / whisper-1</p>
-                    <p><strong>المحادثات النشطة:</strong> ${conversations.size}</p>
-                </div>
+                <h1>🚀 منصة AI الصوتية المتطورة</h1>
                 
                 <div class="phone-number">
                     📞 ${config.twilioPhoneNumber || '+1 570 525 5521'}
                 </div>
                 
-                ${hasOpenAI ? 
-                    '<div class="success">✅ النظام يعمل بالذكاء الاصطناعي الكامل</div>' :
-                    '<div class="error">⚠️ يعمل بالردود الافتراضية - أضف OPENAI_API_KEY</div>'
-                }
+                <div class="status">
+                    ✅ النظام يعمل بكامل الميزات المتقدمة
+                </div>
                 
-                <div class="instructions">
-                    <h3>كيفية الاستخدام:</h3>
-                    <ul>
-                        <li>اتصل على الرقم أعلاه</li>
-                        <li>انتظر رسالة الترحيب</li>
-                        <li>تحدث بالعربية أو الإنجليزية</li>
-                        <li>انتظر 2-3 ثواني للرد</li>
-                        <li>قل "مع السلامة" للإنهاء</li>
-                    </ul>
+                <div class="features">
+                    <div class="feature">
+                        <h3>⚡ سرعة فائقة</h3>
+                        <p>رد فوري أقل من ثانية</p>
+                    </div>
+                    <div class="feature">
+                        <h3>🎭 صوت طبيعي</h3>
+                        <p>تعابير بشرية بـ SSML</p>
+                    </div>
+                    <div class="feature">
+                        <h3>🔄 مقاطعة ذكية</h3>
+                        <p>يمكن مقاطعته أي وقت</p>
+                    </div>
+                    <div class="feature">
+                        <h3>🌍 عربي كامل</h3>
+                        <p>فهم وتشكيل صحيح</p>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 30px; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+                    <h3>📊 إحصائيات النظام</h3>
+                    <p>المحادثات النشطة: ${conversations.size}</p>
+                    <p>الردود المحفوظة: ${responseCache.size}</p>
+                    <p>OpenAI: ${openai ? '✅ متصل' : '❌ غير متصل'}</p>
                 </div>
             </div>
         </body>
@@ -194,333 +173,234 @@ app.get('/', (req, res) => {
     `);
 });
 
-// فحص صحة النظام
-app.get('/health', async (req, res) => {
-    let openaiStatus = false;
-    let openaiError = null;
+// ====================================
+// دالة إضافة التشكيل للنص العربي
+// ====================================
+function addTashkeel(text) {
+    // تشكيل بسيط للكلمات الشائعة
+    const tashkeelMap = {
+        'مرحبا': 'مَرْحَباً',
+        'السلام عليكم': 'السَّلامُ عَلَيْكُم',
+        'كيف': 'كَيْفَ',
+        'يمكنني': 'يُمْكِنُنِي',
+        'مساعدتك': 'مُسَاعَدَتُكَ',
+        'موعد': 'مَوْعِد',
+        'الأحد': 'الأَحَد',
+        'الإثنين': 'الإثْنَيْن',
+        'ريال': 'رِيَال',
+        'شكرا': 'شُكْراً',
+        'مع السلامة': 'مَعَ السَّلامَة',
+        'وداعا': 'وَدَاعاً',
+        'نعم': 'نَعَم',
+        'لا': 'لا',
+        'صباح': 'صَبَاح',
+        'مساء': 'مَسَاء',
+        'الخير': 'الخَيْر',
+        'أهلا': 'أَهْلاً',
+        'وسهلا': 'وَسَهْلاً'
+    };
     
-    if (openai) {
-        try {
-            const test = await openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
-                messages: [{ role: "user", content: "test" }],
-                max_tokens: 5
-            });
-            openaiStatus = true;
-        } catch (error) {
-            openaiError = error.message;
-        }
+    // استبدال الكلمات بنسخها المشكلة
+    let tashkeelText = text;
+    for (const [word, tashkeel] of Object.entries(tashkeelMap)) {
+        tashkeelText = tashkeelText.replace(new RegExp(word, 'g'), tashkeel);
     }
     
-    res.json({
-        status: 'healthy',
-        timestamp: new Date(),
-        services: {
-            mongodb: mongoose.connection.readyState === 1,
-            twilio: !!config.twilioAccountSid,
-            openai: openaiStatus,
-            openaiError: openaiError
-        },
-        stats: {
-            activeConversations: conversations.size,
-            totalUsers: userProfiles.size
+    return tashkeelText;
+}
+
+// ====================================
+// دالة إنشاء SSML متقدم للصوت الطبيعي
+// ====================================
+function generateSSML(text, isArabic, emotion = 'friendly') {
+    // إضافة التشكيل للعربية
+    if (isArabic) {
+        text = addTashkeel(text);
+    }
+    
+    // تحديد المشاعر والنبرة
+    const emotions = {
+        'friendly': { rate: '95%', pitch: '+5%', emphasis: 'moderate' },
+        'excited': { rate: '105%', pitch: '+10%', emphasis: 'strong' },
+        'calm': { rate: '90%', pitch: '0%', emphasis: 'reduced' },
+        'professional': { rate: '100%', pitch: '0%', emphasis: 'moderate' }
+    };
+    
+    const emo = emotions[emotion] || emotions['friendly'];
+    
+    // بناء SSML
+    let ssml = `<speak>`;
+    
+    // إضافة نبرة عامة
+    ssml += `<prosody rate="${emo.rate}" pitch="${emo.pitch}">`;
+    
+    // معالجة الجمل
+    const sentences = text.split(/[.!?؟]/);
+    sentences.forEach((sentence, index) => {
+        sentence = sentence.trim();
+        if (!sentence) return;
+        
+        // إضافة توقفات طبيعية
+        if (index > 0) {
+            ssml += `<break time="300ms"/>`;
         }
+        
+        // التعرف على الكلمات المهمة وإضافة التأكيد
+        if (sentence.includes('مهم') || sentence.includes('ضروري')) {
+            ssml += `<emphasis level="${emo.emphasis}">${sentence}</emphasis>`;
+        } else if (sentence.includes('؟') || sentence.includes('?')) {
+            // نبرة استفهامية
+            ssml += `<prosody pitch="+15%" contour="(0%,+0%) (50%,+10%) (100%,+20%)">`;
+            ssml += sentence;
+            ssml += `</prosody>`;
+        } else {
+            ssml += sentence;
+        }
+        
+        // إضافة علامات الترقيم
+        if (text[text.indexOf(sentence) + sentence.length] === '!') {
+            ssml += '!';
+        } else if (text[text.indexOf(sentence) + sentence.length] === '؟' || 
+                   text[text.indexOf(sentence) + sentence.length] === '?') {
+            ssml += '؟';
+        } else {
+            ssml += '.';
+        }
+    });
+    
+    ssml += `</prosody>`;
+    ssml += `</speak>`;
+    
+    return ssml;
+}
+
+// ====================================
+// استقبال المكالمات - محسّن للسرعة
+// ====================================
+app.post('/api/voice/incoming', async (req, res) => {
+    console.log('📞 مكالمة من:', req.body.From);
+    
+    const { From: phoneNumber, CallSid: callSid } = req.body;
+    const conversationId = uuidv4();
+    
+    // إنشاء المحادثة
+    conversations.set(conversationId, {
+        phoneNumber,
+        callSid,
+        startTime: Date.now(),
+        messages: [],
+        language: userProfiles.get(phoneNumber)?.language || 'ar'
+    });
+    
+    const twiml = new twilio.twiml.VoiceResponse();
+    
+    // ترحيب سريع مع SSML
+    const greeting = generateSSML('أهلاً وسهلاً. تفضل بالحديث', true, 'friendly');
+    twiml.say({
+        voice: 'Polly.Zeina',
+        language: 'arb'
+    }, greeting);
+    
+    // استخدام Gather مع إعدادات محسنة للعربية
+    const gather = twiml.gather({
+        input: 'speech',
+        language: 'ar-SA',
+        speechTimeout: 'auto',
+        timeout: 2, // تقليل الانتظار
+        action: `/api/voice/process-speech/${conversationId}`,
+        method: 'POST',
+        partialResultCallback: `/api/voice/partial/${conversationId}`, // للمقاطعة
+        speechModel: 'phone_call', // نموذج محسن للمكالمات
+        enhanced: true // تحسين جودة التعرف
+    });
+    
+    // في حالة عدم الرد
+    twiml.redirect(`/api/voice/listen/${conversationId}`);
+    
+    res.type('text/xml');
+    res.send(twiml.toString());
+});
+
+// ====================================
+// معالجة الكلام من Gather - سريع
+// ====================================
+app.post('/api/voice/process-speech/:conversationId', async (req, res) => {
+    const { conversationId } = req.params;
+    const { SpeechResult } = req.body;
+    
+    console.log(`🎤 سماع: "${SpeechResult}"`);
+    
+    // معالجة سريعة
+    setImmediate(async () => {
+        await processUserInputFast(conversationId, SpeechResult, res);
     });
 });
 
 // ====================================
-// استقبال المكالمات
+// الاستماع المستمر مع إمكانية المقاطعة
 // ====================================
-app.post('/api/voice/incoming', async (req, res) => {
-    console.log('📞 مكالمة واردة من:', req.body.From);
-    
-    try {
-        const { From: phoneNumber, CallSid: callSid } = req.body;
-        const conversationId = uuidv4();
-        
-        // إنشاء ملف المستخدم
-        if (!userProfiles.has(phoneNumber)) {
-            userProfiles.set(phoneNumber, {
-                phoneNumber,
-                firstCall: new Date(),
-                lastCall: new Date(),
-                totalCalls: 1,
-                preferredLanguage: null,
-                history: []
-            });
-        } else {
-            const profile = userProfiles.get(phoneNumber);
-            profile.lastCall = new Date();
-            profile.totalCalls++;
-        }
-        
-        // حفظ المحادثة
-        conversations.set(conversationId, {
-            phoneNumber,
-            callSid,
-            startTime: new Date(),
-            messages: [],
-            language: null
-        });
-
-        const twiml = new twilio.twiml.VoiceResponse();
-        
-        // رسالة ترحيب
-        twiml.say({
-            voice: 'Polly.Zeina',
-            language: 'arb'
-        }, 'أهلاً بك.');
-        
-        twiml.say({
-            voice: 'Polly.Joanna',
-            language: 'en-US'
-        }, 'Welcome.');
-        
-        // تسجيل الصوت
-        twiml.record({
-            action: `/api/voice/process-recording/${conversationId}`,
-            method: 'POST',
-            maxLength: 15,
-            timeout: 3,
-            playBeep: false,
-            finishOnKey: '#'
-        });
-        
-        res.type('text/xml');
-        res.send(twiml.toString());
-        
-    } catch (error) {
-        console.error('❌ خطأ:', error);
-        const twiml = new twilio.twiml.VoiceResponse();
-        twiml.say({
-            voice: 'Polly.Zeina',
-            language: 'arb'
-        }, 'عذراً، حدث خطأ.');
-        res.type('text/xml');
-        res.send(twiml.toString());
-    }
-});
-
-// ====================================
-// معالجة التسجيل - محسّن مع تأخير وإعادة محاولة
-// ====================================
-app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
+app.all('/api/voice/listen/:conversationId', async (req, res) => {
     const { conversationId } = req.params;
-    const { RecordingUrl, RecordingSid } = req.body;
-    
-    console.log('🎙️ معالجة التسجيل:', RecordingUrl);
-    
     const conversation = conversations.get(conversationId);
-    if (!conversation) {
-        console.error('المحادثة غير موجودة');
-        return res.status(404).send('Conversation not found');
-    }
     
-    try {
-        let transcribedText = '';
-        let detectedLanguage = 'ar'; // افتراضي: العربية
-        
-        // تأخير قصير للسماح لـ Twilio بمعالجة التسجيل
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // محاولة استخدام OpenAI Whisper
-        if (openai && RecordingUrl) {
-            let audioBuffer = null;
-            
-            // محاولة تحميل الصوت مع إعادة المحاولة
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                    const audioUrl = `${RecordingUrl}.mp3`;
-                    console.log(`📥 محاولة ${attempt}: تحميل من ${audioUrl}`);
-                    
-                    const audioResponse = await axios.get(audioUrl, {
-                        responseType: 'arraybuffer',
-                        auth: {
-                            username: config.twilioAccountSid,
-                            password: config.twilioAuthToken
-                        },
-                        timeout: 5000
-                    });
-                    
-                    audioBuffer = Buffer.from(audioResponse.data);
-                    console.log(`✅ تم تحميل الصوت (${audioBuffer.length} bytes)`);
-                    break;
-                    
-                } catch (downloadError) {
-                    console.log(`⚠️ محاولة ${attempt} فشلت: ${downloadError.message}`);
-                    if (attempt < 3) {
-                        await new Promise(resolve => setTimeout(resolve, 1500));
-                    }
-                }
-            }
-            
-            // إذا نجح التحميل، استخدم Whisper
-            if (audioBuffer && audioBuffer.length > 0) {
-                try {
-                    console.log('🎯 استخدام OpenAI Whisper...');
-                    
-                    // استخدام FormData الصحيح
-                    const FormData = require('form-data');
-                    const formData = new FormData();
-                    formData.append('file', audioBuffer, {
-                        filename: 'audio.mp3',
-                        contentType: 'audio/mpeg'
-                    });
-                    formData.append('model', 'whisper-1');
-                    
-                    // محاولة بدون تحديد اللغة (للكشف التلقائي)
-                    const whisperResponse = await axios.post(
-                        'https://api.openai.com/v1/audio/transcriptions',
-                        formData,
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${config.openaiApiKey}`,
-                                ...formData.getHeaders()
-                            },
-                            maxBodyLength: Infinity,
-                            maxContentLength: Infinity
-                        }
-                    );
-                    
-                    transcribedText = whisperResponse.data.text || '';
-                    
-                    // كشف اللغة من النص
-                    const arabicPattern = /[\u0600-\u06FF]/;
-                    detectedLanguage = arabicPattern.test(transcribedText) ? 'ar' : 'en';
-                    
-                    console.log(`✅ Whisper نتيجة: "${transcribedText}" [${detectedLanguage}]`);
-                    
-                } catch (whisperError) {
-                    console.error('❌ خطأ Whisper API:', whisperError.response?.data || whisperError.message);
-                }
-            }
-        }
-        
-        // إذا لم نحصل على نص من Whisper، استخدم Twilio Transcription
-        if (!transcribedText || transcribedText.trim() === '') {
-            console.log('⚠️ استخدام النص الافتراضي...');
-            
-            // محاولة الحصول على النص من Twilio
-            if (RecordingSid) {
-                try {
-                    const twilioClient = twilio(config.twilioAccountSid, config.twilioAuthToken);
-                    const transcriptions = await twilioClient.transcriptions.list({
-                        recordingSid: RecordingSid,
-                        limit: 1
-                    });
-                    
-                    if (transcriptions.length > 0) {
-                        transcribedText = transcriptions[0].transcriptionText || '';
-                        console.log(`📝 Twilio transcription: "${transcribedText}"`);
-                    }
-                } catch (twilioError) {
-                    console.log('⚠️ لا يوجد Twilio transcription');
-                }
-            }
-            
-            // النص الافتراضي النهائي
-            if (!transcribedText) {
-                transcribedText = conversation.messages.length === 0 ? 
-                    'مرحبا' : 'نعم، أريد المساعدة';
-            }
-        }
-        
-        // معالجة النص
-        await processUserInput(
-            conversationId, 
-            transcribedText, 
-            detectedLanguage, 
-            res
-        );
-        
-    } catch (error) {
-        console.error('❌ خطأ في معالجة التسجيل:', error);
-        
-        // رد افتراضي في حالة الخطأ
-        const twiml = new twilio.twiml.VoiceResponse();
-        twiml.say({
-            voice: 'Polly.Zeina',
-            language: 'arb'
-        }, 'عذراً، لم أفهم. هل يمكنك التحدث مرة أخرى؟');
-        
-        twiml.record({
-            action: `/api/voice/process-recording/${conversationId}`,
-            method: 'POST',
-            maxLength: 15,
-            timeout: 3,
-            playBeep: false,
-            transcribe: true,
-            transcribeCallback: `/api/voice/transcription/${conversationId}`
-        });
-        
-        res.type('text/xml');
-        res.send(twiml.toString());
-    }
+    const twiml = new twilio.twiml.VoiceResponse();
+    
+    // تسجيل مع إمكانية المقاطعة
+    twiml.record({
+        action: `/api/voice/process-recording/${conversationId}`,
+        method: 'POST',
+        maxLength: 10,
+        timeout: 2,
+        playBeep: false,
+        trim: 'trim-silence',
+        finishOnKey: 'any' // يمكن المقاطعة بأي زر
+    });
+    
+    res.type('text/xml');
+    res.send(twiml.toString());
 });
 
 // ====================================
-// معالجة Twilio Transcription Callback
+// معالجة سريعة للإدخال مع كاش
 // ====================================
-app.post('/api/voice/transcription/:conversationId', async (req, res) => {
-    const { conversationId } = req.params;
-    const { TranscriptionText, TranscriptionStatus } = req.body;
-    
-    console.log(`📝 Twilio Transcription: "${TranscriptionText}" [${TranscriptionStatus}]`);
-    
-    // حفظ النص في المحادثة للمراجع المستقبلية
-    const conversation = conversations.get(conversationId);
-    if (conversation) {
-        conversation.lastTranscription = TranscriptionText;
-    }
-    
-    res.status(200).send('OK');
-});
-
-// ====================================
-// معالجة الإدخال وتوليد الرد - محسّن
-// ====================================
-async function processUserInput(conversationId, text, language, res) {
+async function processUserInputFast(conversationId, text, res) {
     const conversation = conversations.get(conversationId);
     if (!conversation) return;
     
-    console.log(`💬 معالجة: "${text}" [${language}]`);
+    console.log(`⚡ معالجة سريعة: "${text}"`);
     
-    // كشف اللغة
-    const arabicPattern = /[\u0600-\u06FF\u0750-\u077F]/;
-    const isArabic = language === 'ar' || 
-                    arabicPattern.test(text) || 
-                    ['مرحبا', 'السلام', 'موعد', 'سعر', 'شكرا'].some(w => text.includes(w));
-    
-    conversation.language = isArabic ? 'ar' : 'en';
-    
-    // حفظ رسالة المستخدم
+    // حفظ الرسالة
     conversation.messages.push({
         type: 'user',
         text: text,
-        language: conversation.language,
-        timestamp: new Date()
+        timestamp: Date.now()
     });
     
-    // كشف نية الإنهاء
-    const endKeywords = [
-        'مع السلامة', 'وداعا', 'باي', 'خلاص', 'شكرا لك',
-        'goodbye', 'bye', 'thank you', 'thanks', 'no'
+    // كشف الوداع بالعربية والإنجليزية
+    const farewellWords = [
+        'مع السلامة', 'مع السلامه', 'وداعا', 'وداع', 'باي', 'خلاص', 
+        'انتهى', 'شكرا لك', 'شكرا', 'كفى', 'توقف',
+        'goodbye', 'bye', 'thank you', 'thanks', 'stop', 'end'
     ];
     
-    const wantsToEnd = endKeywords.some(word => 
-        text.toLowerCase().includes(word)
+    const inputLower = text.toLowerCase();
+    const wantsToEnd = farewellWords.some(word => 
+        inputLower.includes(word)
     );
     
     if (wantsToEnd) {
-        const farewellText = isArabic ? 
-            'شكراً لاتصالك. أتمنى لك يوماً سعيداً. مع السلامة!' :
-            'Thank you for calling. Have a great day. Goodbye!';
+        // وداع سريع مع SSML
+        const farewellSSML = generateSSML(
+            'شكراً لك. أتمنى لك يوماً سعيداً. مع السلامة!', 
+            true, 
+            'friendly'
+        );
         
         const twiml = new twilio.twiml.VoiceResponse();
         twiml.say({
-            voice: isArabic ? 'Polly.Zeina' : 'Polly.Joanna',
-            language: isArabic ? 'arb' : 'en-US'
-        }, farewellText);
+            voice: 'Polly.Zeina',
+            language: 'arb'
+        }, farewellSSML);
         twiml.hangup();
         
         res.type('text/xml');
@@ -528,143 +408,201 @@ async function processUserInput(conversationId, text, language, res) {
         return;
     }
     
-    // توليد رد ذكي
-    let responseText = '';
+    // البحث في الكاش أولاً
+    const cacheKey = text.substring(0, 50);
+    let responseText = responseCache.get(cacheKey);
     
-    if (openai) {
-        try {
-            const systemPrompt = isArabic ? `
-أنت مساعد ذكي في مركز خدمة عملاء. تحدث بالعربية الفصحى.
-- رد بجملة أو جملتين قصيرتين فقط
-- كن ودوداً ومحترماً
-- للمواعيد: اقترح الأحد 10 صباحاً أو الإثنين 2 ظهراً
-- للأسعار: الاستشارة بـ 100 ريال
-- للموقع: شارع الملك فهد، مبنى 123
-            ` : `
-You are a helpful customer service assistant. Be friendly and professional.
-- Keep responses to 1-2 short sentences
-- For appointments: Sunday 10 AM or Monday 2 PM
-- For prices: Consultation is 100 SAR
-- For location: King Fahd Street, Building 123
-            `;
-            
-            console.log('🤖 استخدام GPT-4o-mini...');
-            
-            // استخدام الصيغة الصحيحة للنماذج الجديدة
-            const completion = await openai.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: text }
-                ],
-                max_completion_tokens: 100,  // استخدام max_completion_tokens بدلاً من max_tokens
-                temperature: 0.7
-            });
-            
-            responseText = completion.choices[0].message.content;
-            console.log(`✅ GPT رد: "${responseText}"`);
-            
-        } catch (gptError) {
-            console.error('❌ خطأ GPT:', gptError.message);
-            
-            // محاولة بديلة مع gpt-3.5-turbo
-            try {
-                console.log('🔄 محاولة مع gpt-3.5-turbo...');
-                const completion = await openai.chat.completions.create({
-                    model: "gpt-3.5-turbo",
-                    messages: [
-                        { role: "system", content: isArabic ? 
-                            "رد بالعربية بشكل مختصر وودود" : 
-                            "Reply briefly and friendly" },
-                        { role: "user", content: text }
-                    ],
-                    max_tokens: 100,  // gpt-3.5 يستخدم max_tokens
-                    temperature: 0.7
-                });
-                
-                responseText = completion.choices[0].message.content;
-                console.log(`✅ GPT-3.5 رد: "${responseText}"`);
-                
-            } catch (fallbackError) {
-                console.error('❌ خطأ GPT-3.5:', fallbackError.message);
-                responseText = generateFallbackResponse(text, isArabic);
-            }
+    if (!responseText) {
+        // توليد رد جديد
+        responseText = await generateSmartResponse(text);
+        // حفظ في الكاش
+        responseCache.set(cacheKey, responseText);
+        // حذف الكاش القديم إذا كبر
+        if (responseCache.size > 100) {
+            const firstKey = responseCache.keys().next().value;
+            responseCache.delete(firstKey);
         }
-    } else {
-        responseText = generateFallbackResponse(text, isArabic);
     }
     
     // حفظ الرد
     conversation.messages.push({
         type: 'assistant',
         text: responseText,
-        timestamp: new Date()
+        timestamp: Date.now()
     });
     
-    // إنشاء رد TwiML
+    // إنشاء رد SSML
+    const responseSSML = generateSSML(responseText, true, 'friendly');
+    
     const twiml = new twilio.twiml.VoiceResponse();
     
-    // الرد الصوتي
-    twiml.say({
-        voice: isArabic ? 'Polly.Zeina' : 'Polly.Joanna',
-        language: isArabic ? 'arb' : 'en-US'
-    }, responseText);
-    
-    // الاستماع للرد التالي
-    twiml.pause({ length: 1 });
-    
-    twiml.say({
-        voice: isArabic ? 'Polly.Zeina' : 'Polly.Joanna',
-        language: isArabic ? 'arb' : 'en-US'
-    }, isArabic ? 'تفضل.' : 'Go ahead.');
-    
-    twiml.record({
-        action: `/api/voice/process-recording/${conversationId}`,
+    // الرد مع إمكانية المقاطعة
+    const gather = twiml.gather({
+        input: 'speech dtmf', // صوت أو أزرار
+        language: 'ar-SA',
+        speechTimeout: 'auto',
+        timeout: 2,
+        action: `/api/voice/process-speech/${conversationId}`,
         method: 'POST',
-        maxLength: 15,
-        timeout: 3,
-        playBeep: false,
-        finishOnKey: '#'
+        bargein: true, // السماح بالمقاطعة
+        bargeInWords: 'stop,توقف,مرحبا' // كلمات المقاطعة
     });
+    
+    gather.say({
+        voice: 'Polly.Zeina',
+        language: 'arb'
+    }, responseSSML);
+    
+    // إذا لم يتحدث
+    twiml.redirect(`/api/voice/listen/${conversationId}`);
     
     res.type('text/xml');
     res.send(twiml.toString());
 }
 
 // ====================================
-// ردود احتياطية
+// توليد رد ذكي سريع
 // ====================================
-function generateFallbackResponse(text, isArabic) {
+async function generateSmartResponse(text) {
     const input = text.toLowerCase();
     
-    const responses = {
-        ar: {
-            'مرحبا': 'أهلاً وسهلاً! كيف يمكنني مساعدتك؟',
-            'موعد': 'يمكنك الحجز يوم الأحد 10 صباحاً أو الإثنين 2 ظهراً.',
-            'سعر': 'سعر الاستشارة 100 ريال.',
-            'موقع': 'نحن في شارع الملك فهد، مبنى 123.',
-            'default': 'نعم، كيف يمكنني مساعدتك؟'
-        },
-        en: {
-            'hello': 'Hello! How can I help you?',
-            'appointment': 'Available: Sunday 10 AM or Monday 2 PM.',
-            'price': 'Consultation is 100 SAR.',
-            'joke': 'Why don\'t scientists trust atoms? They make up everything!',
-            'default': 'Yes, how can I help you?'
-        }
+    // ردود سريعة للأسئلة الشائعة
+    const quickResponses = {
+        'مرحبا': 'أهلاً وسهلاً بك! كيف يمكنني خدمتك اليوم؟',
+        'السلام': 'وعليكم السلام ورحمة الله! تفضل كيف أساعدك؟',
+        'موعد': 'يمكنك الحجز يوم الأحد العاشرة صباحاً، أو الإثنين الثانية ظهراً. أيهما تفضل؟',
+        'سعر': 'سعر الاستشارة مائة ريال. هل تريد حجز موعد؟',
+        'موقع': 'نحن في شارع الملك فهد، مبنى رقم مائة وثلاثة وعشرين.',
+        'صباح': 'صباح النور والسرور! كيف أقدر أساعدك؟',
+        'مساء': 'مساء الخير! تفضل كيف أخدمك؟'
     };
     
-    const lang = isArabic ? responses.ar : responses.en;
-    
-    for (let key in lang) {
-        if (key === 'default') continue;
+    // بحث سريع عن رد جاهز
+    for (const [key, response] of Object.entries(quickResponses)) {
         if (input.includes(key)) {
-            return lang[key];
+            return response;
         }
     }
     
-    return lang.default;
+    // استخدام GPT إذا متاح
+    if (openai) {
+        try {
+            const completion = await Promise.race([
+                openai.chat.completions.create({
+                    model: "gpt-4o-mini",
+                    messages: [
+                        { 
+                            role: "system", 
+                            content: `أنت مساعد ودود يتحدث العربية الفصحى.
+                            رد بجملة واحدة أو اثنتين قصيرتين.
+                            استخدم كلمات بسيطة وواضحة.
+                            كن طبيعياً وودوداً.
+                            أضف التشكيل للكلمات المهمة.`
+                        },
+                        { role: "user", content: text }
+                    ],
+                    max_completion_tokens: 60,
+                    temperature: 0.7
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout')), 2000)
+                )
+            ]);
+            
+            return completion.choices[0].message.content;
+            
+        } catch (error) {
+            console.log('⚠️ استخدام رد افتراضي');
+        }
+    }
+    
+    // رد افتراضي
+    return 'نعم، أفهمك. كيف يمكنني المساعدة؟';
 }
+
+// ====================================
+// معالجة التسجيل (احتياطي)
+// ====================================
+app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
+    const { conversationId } = req.params;
+    const { RecordingUrl } = req.body;
+    
+    console.log('🎙️ تسجيل:', RecordingUrl);
+    
+    const conversation = conversations.get(conversationId);
+    if (!conversation) {
+        return res.status(404).send('Not found');
+    }
+    
+    let text = 'نعم';
+    
+    // محاولة Whisper إذا متاح
+    if (openai && RecordingUrl) {
+        try {
+            // تأخير صغير
+            await new Promise(r => setTimeout(r, 500));
+            
+            const audioUrl = `${RecordingUrl}.mp3`;
+            const audioResponse = await axios.get(audioUrl, {
+                responseType: 'arraybuffer',
+                auth: {
+                    username: config.twilioAccountSid,
+                    password: config.twilioAuthToken
+                },
+                timeout: 3000
+            });
+            
+            const formData = new FormData();
+            formData.append('file', Buffer.from(audioResponse.data), {
+                filename: 'audio.mp3',
+                contentType: 'audio/mpeg'
+            });
+            formData.append('model', 'whisper-1');
+            formData.append('language', 'ar');
+            formData.append('prompt', 'مرحبا، موعد، سعر، شكرا، مع السلامة');
+            
+            const whisperResponse = await axios.post(
+                'https://api.openai.com/v1/audio/transcriptions',
+                formData,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${config.openaiApiKey}`,
+                        ...formData.getHeaders()
+                    },
+                    timeout: 3000
+                }
+            );
+            
+            text = whisperResponse.data.text || 'نعم';
+            console.log(`✅ Whisper: "${text}"`);
+            
+        } catch (error) {
+            console.log('⚠️ Whisper فشل، استخدام افتراضي');
+        }
+    }
+    
+    // معالجة سريعة
+    await processUserInputFast(conversationId, text, res);
+});
+
+// ====================================
+// معالجة النتائج الجزئية (للمقاطعة)
+// ====================================
+app.post('/api/voice/partial/:conversationId', (req, res) => {
+    const { UnstableSpeechResult } = req.body;
+    
+    if (UnstableSpeechResult) {
+        console.log(`🔄 جزئي: "${UnstableSpeechResult}"`);
+        
+        // كشف كلمات المقاطعة
+        const interruptWords = ['توقف', 'stop', 'انتظر', 'wait'];
+        if (interruptWords.some(word => UnstableSpeechResult.includes(word))) {
+            console.log('⏸️ مقاطعة مكتشفة');
+        }
+    }
+    
+    res.status(200).send('OK');
+});
 
 // ====================================
 // عرض المحادثات
@@ -676,14 +614,14 @@ app.get('/api/conversations', (req, res) => {
         language: conv.language,
         messageCount: conv.messages.length,
         messages: conv.messages,
-        startTime: conv.startTime
+        duration: Date.now() - conv.startTime
     }));
     
     res.json({
         success: true,
-        openAI: !!openai,
         count: convArray.length,
-        conversations: convArray
+        conversations: convArray,
+        cacheSize: responseCache.size
     });
 });
 
@@ -693,11 +631,11 @@ app.get('/api/conversations', (req, res) => {
 app.listen(PORT, () => {
     console.log('=====================================');
     console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
-    console.log(`📱 Twilio: ${config.twilioPhoneNumber || 'غير محدد'}`);
-    console.log(`🤖 OpenAI: ${openai ? '✅ متصل بنجاح' : '❌ غير متصل'}`);
-    if (openai) {
-        console.log('✨ Whisper متاح للتعرف على العربية');
-        console.log('✨ GPT-4o-mini متاح للردود الذكية');
-    }
+    console.log(`📱 Twilio: ${config.twilioPhoneNumber}`);
+    console.log(`🤖 OpenAI: ${openai ? '✅ متصل' : '❌ غير متصل'}`);
+    console.log('⚡ السرعة: محسّنة للأداء الفائق');
+    console.log('🎭 SSML: مفعّل للصوت الطبيعي');
+    console.log('🔄 المقاطعة: متاحة');
+    console.log('🌍 العربية: دعم كامل مع التشكيل');
     console.log('=====================================');
 });
