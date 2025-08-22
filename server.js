@@ -96,9 +96,17 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CREDENTIALS
                 credentials: credentials,
                 projectId: credentials.project_id
             });
-        } else {
+            console.log('✅ Google Speech: تم إعداد credentials من JSON');
+        } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
             // استخدام ملف credentials (إذا كان متوفراً)
+            googleSpeech = new speech.SpeechClient({
+                keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+            });
+            console.log('✅ Google Speech: تم إعداد credentials من ملف');
+        } else {
+            // استخدام الإعدادات الافتراضية
             googleSpeech = new speech.SpeechClient();
+            console.log('✅ Google Speech: تم إعداد credentials افتراضي');
         }
         
         console.log('✅ Google Speech-to-Text جاهز');
@@ -355,7 +363,7 @@ async function addTashkeel(text) {
                             content: `أضف التشكيل الصحيح لهذا النص العربي: "${text}"`
                         }
                     ],
-                    max_tokens: 500,
+                    max_completion_tokens: 500,
                     temperature: 0.1
                 }),
                 new Promise((_, reject) => 
@@ -701,7 +709,7 @@ async function generateSSML(text, isArabic, emotion = 'friendly') {
                             content: `أنشئ SSML محسن لهذا النص العربي: "${text}" مع المشاعر: ${emotion}`
                         }
                     ],
-                    max_tokens: 800,
+                    max_completion_tokens: 800,
                     temperature: 0.2
                 }),
                 new Promise((_, reject) => 
