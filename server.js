@@ -102,11 +102,17 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CREDENTIALS
         // إعداد credentials
         let credentials = null;
         if (process.env.GOOGLE_CREDENTIALS_JSON) {
-            credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+            try {
+                credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+                console.log('✅ تم تحليل GOOGLE_CREDENTIALS_JSON بنجاح');
+            } catch (parseError) {
+                console.error('❌ خطأ في تحليل GOOGLE_CREDENTIALS_JSON:', parseError.message);
+                credentials = null;
+            }
         }
         
         // إعداد Google Speech Client
-        if (credentials) {
+        if (credentials && credentials.project_id) {
             // استخدام JSON credentials مباشرة
             googleSpeech = new speech.SpeechClient({
                 credentials: credentials,
@@ -438,8 +444,7 @@ async function addTashkeel(text) {
                             content: `أضف التشكيل الصحيح لهذا النص العربي: "${text}"`
                         }
                     ],
-                    max_completion_tokens: 500,
-                    temperature: 0.1
+                    max_completion_tokens: 500
                 }),
                 new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('GPT Timeout')), 5000)
@@ -845,8 +850,7 @@ async function generateSSML(text, isArabic, emotion = 'friendly') {
                             content: `أنشئ SSML محسن لهذا النص العربي: "${text}" مع المشاعر: ${emotion}`
                         }
                     ],
-                    max_completion_tokens: 800,
-                    temperature: 0.2
+                    max_completion_tokens: 800
                 }),
                 new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('GPT Timeout')), 8000)
@@ -1632,8 +1636,7 @@ async function generateSmartResponse(text) {
                         },
                         { role: "user", content: text }
                     ],
-                    max_completion_tokens: 200,
-                    temperature: 0.8
+                    max_completion_tokens: 200
                 }),
                 new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('Timeout')), 3000)
@@ -2230,8 +2233,8 @@ app.get('/api/info', (req, res) => {
             },
             output: {
                 elevenLabs: 'MP3 22.05kHz 64kbps',
-                ssml: 'Gemini أولاً، ثم GPT-5 كبديل',
-                tashkeel: 'Gemini أولاً، ثم GPT-5 كبديل',
+                            ssml: 'Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)',
+            tashkeel: 'Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)',
                 processing: 'معطلة مؤقتاً لاستقرار النظام'
             },
             performance: {
@@ -2272,8 +2275,8 @@ app.listen(PORT, () => {
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
     console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps (معالجة معطلة مؤقتاً)');
     console.log('   🔧 المعالجة: معطلة مؤقتاً لاستقرار النظام');
-        console.log('   🤖 التشكيل: Gemini أولاً، ثم GPT-5 كبديل');
-    console.log('   🎭 SSML: Gemini أولاً، ثم GPT-5 كبديل');
+                    console.log('   🤖 التشكيل: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
+            console.log('   🎭 SSML: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
     console.log('=====================================');
     
     // تحذير إذا كانت المتغيرات مفقودة
