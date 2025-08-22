@@ -3,6 +3,7 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const twilio = require('twilio');
 const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const FormData = require('form-data');
@@ -18,6 +19,7 @@ const config = {
     twilioAuthToken: process.env.TWILIO_AUTH_TOKEN,
     twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER,
     openaiApiKey: process.env.OPENAI_API_KEY,
+    geminiApiKey: process.env.GEMINI_API_KEY,
     elevenLabsApiKey: process.env.ELEVENLABS_API_KEY,
     elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID
 };
@@ -28,6 +30,7 @@ const requiredEnvVars = [
     'TWILIO_AUTH_TOKEN', 
     'TWILIO_PHONE_NUMBER',
     'OPENAI_API_KEY',
+    'GEMINI_API_KEY',
     'ELEVENLABS_API_KEY',
     'ELEVENLABS_VOICE_ID'
 ];
@@ -75,6 +78,19 @@ if (config.twilioAccountSid && config.twilioAuthToken && config.twilioPhoneNumbe
     console.log('✅ Twilio credentials موجودة');
 } else {
     console.error('⚠️ Twilio credentials غير موجودة في Config Vars');
+}
+
+// إعداد Gemini AI
+let geminiAI = null;
+if (config.geminiApiKey) {
+    try {
+        geminiAI = new GoogleGenerativeAI(config.geminiApiKey);
+        console.log('✅ Gemini AI جاهز');
+    } catch (error) {
+        console.error('❌ خطأ Gemini AI:', error.message);
+    }
+} else {
+    console.log('⚠️ GEMINI_API_KEY غير موجود في Config Vars');
 }
 
 // إعداد Google Speech-to-Text
@@ -320,13 +336,72 @@ app.get('/', (req, res) => {
 // ====================================
 async function addTashkeel(text) {
     try {
-        // استخدام GPT-5 للتشكيل الدقيق
+        // استخدام Gemini للتشكيل العربي (الأولوية)
+        if (geminiAI) {
+            console.log('🌟 استخدام Gemini للتشكيل العربي...');
+            
+            try {
+                const model = geminiAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+                
+                const prompt = `أنت خبير في اللغة العربية والتشكيل. مهمتك:
+
+🎯 المهمة:
+- أضف التشكيل الصحيح والدقيق للنص العربي
+- استخدم التشكيل الكامل (الفتحة، الكسرة، الضمة، السكون)
+- تأكد من صحة التشكيل نحويًا وإملائيًا
+- حافظ على معنى النص الأصلي
+
+📚 قواعد التشكيل:
+- استخدم الفتحة (َ) للفاعل والمفعول
+- استخدم الكسرة (ِ) للمضاف إليه والصفة
+- استخدم الضمة (ُ) للرفع والجزم
+- استخدم السكون (ْ) للسكون الطبيعي
+- استخدم الشدة (ّ) للتضعيف
+
+🌟 المطلوب:
+- أعد النص مع التشكيل الكامل
+- لا تغير معنى النص
+- لا تضيف كلمات جديدة
+- تأكد من صحة التشكيل
+
+❌ لا تفعل:
+- لا تغير معنى النص
+- لا تضيف كلمات غير موجودة
+- لا تستخدم تشكيل خاطئ
+
+أعد النص مع التشكيل الصحيح فقط، بدون شرح أو تعليقات.
+
+النص: "${text}"`;
+
+                const result = await Promise.race([
+                    model.generateContent({
+                        contents: [{ role: "user", parts: [{ text: prompt }] }],
+                        generationConfig: {
+                            maxOutputTokens: 500,
+                            temperature: 0.1
+                        }
+                    }),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Gemini Timeout')), 5000)
+                    )
+                ]);
+
+                const tashkeeledText = result.response.text().trim();
+                console.log(`✅ تم التشكيل باستخدام Gemini: "${text}" → "${tashkeeledText}"`);
+                return tashkeeledText;
+                
+            } catch (geminiError) {
+                console.log('⚠️ Gemini فشل، محاولة GPT...');
+            }
+        }
+        
+        // استخدام GPT-5 للتشكيل الدقيق (كبديل)
         if (openai) {
             console.log('🤖 استخدام GPT للتشكيل العربي...');
             
             const completion = await Promise.race([
                 openai.chat.completions.create({
-                                                model: "gpt-5",
+                    model: "gpt-5",
                     messages: [
                         {
                             role: "system",
@@ -376,12 +451,12 @@ async function addTashkeel(text) {
             return tashkeeledText;
         }
         
-        // استخدام التشكيل الثابت كبديل إذا فشل GPT
-        console.log('⚠️ GPT غير متاح، استخدام التشكيل الثابت');
+        // استخدام التشكيل الثابت كبديل إذا فشل كلاهما
+        console.log('⚠️ Gemini وGPT غير متاحان، استخدام التشكيل الثابت');
         return addTashkeelFallback(text);
         
     } catch (error) {
-        console.error('❌ خطأ في التشكيل باستخدام GPT:', error.message);
+        console.error('❌ خطأ في التشكيل:', error.message);
         console.log('⚠️ استخدام التشكيل الثابت كبديل');
         return addTashkeelFallback(text);
     }
@@ -665,13 +740,74 @@ async function generateSSML(text, isArabic, emotion = 'friendly') {
             text = await addTashkeel(text);
         }
         
-        // استخدام GPT-5 لصياغة SSML محسن
+        // استخدام Gemini لصياغة SSML (الأولوية)
+        if (geminiAI) {
+            console.log('🌟 استخدام Gemini لصياغة SSML...');
+            
+            try {
+                const model = geminiAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+                
+                const prompt = `أنت خبير في SSML (Speech Synthesis Markup Language) واللغة العربية. مهمتك:
+
+🎯 المهمة:
+- أنشئ SSML محسن للعربية مع التشكيل الصحيح
+- استخدم SSML 1.1 مع xml:lang="ar-SA"
+- أضف prosody tags للتحكم في النبرة والسرعة والحجم
+- أضف break tags للتوقفات الطبيعية
+- أضف emphasis tags للكلمات المهمة
+
+📚 قواعد SSML:
+- استخدم <speak version="1.1" xml:lang="ar-SA">
+- استخدم <prosody> للتحكم في rate, pitch, volume
+- استخدم <break time="Xms"> للتوقفات
+- استخدم <emphasis level="strong/moderate/reduced">
+- استخدم <say-as> للأرقام والتواريخ
+
+🌟 المطلوب:
+- أنشئ SSML محسن للعربية
+- أضف نبرة طبيعية ومتغيرة
+- أضف توقفات مناسبة
+- تأكد من صحة SSML
+
+❌ لا تفعل:
+- لا تستخدم tags غير صحيحة
+- لا تنسى إغلاق tags
+- لا تستخدم قيم غير صحيحة
+
+أعد SSML كامل فقط، بدون شرح أو تعليقات.
+
+النص: "${text}"
+المشاعر: ${emotion}`;
+
+                const result = await Promise.race([
+                    model.generateContent({
+                        contents: [{ role: "user", parts: [{ text: prompt }] }],
+                        generationConfig: {
+                            maxOutputTokens: 800,
+                            temperature: 0.2
+                        }
+                    }),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Gemini Timeout')), 8000)
+                    )
+                ]);
+
+                const ssmlText = result.response.text().trim();
+                console.log(`✅ تم إنشاء SSML باستخدام Gemini: "${ssmlText.substring(0, 100)}..."`);
+                return ssmlText;
+                
+            } catch (geminiError) {
+                console.log('⚠️ Gemini فشل، محاولة GPT...');
+            }
+        }
+        
+        // استخدام GPT-5 لصياغة SSML محسن (كبديل)
         if (openai) {
             console.log('🤖 استخدام GPT لصياغة SSML...');
             
             const completion = await Promise.race([
                 openai.chat.completions.create({
-                                                model: "gpt-5",
+                    model: "gpt-5",
                     messages: [
                         {
                             role: "system",
@@ -722,8 +858,8 @@ async function generateSSML(text, isArabic, emotion = 'friendly') {
             return ssmlText;
         }
         
-        // استخدام SSML الثابت كبديل إذا فشل GPT
-        console.log('⚠️ GPT غير متاح، استخدام SSML الثابت');
+        // استخدام SSML الثابت كبديل إذا فشل كلاهما
+        console.log('⚠️ Gemini وGPT غير متاحان، استخدام SSML الثابت');
         return generateSSMLFallback(text, isArabic, emotion);
         
     } catch (error) {
@@ -1390,51 +1526,114 @@ async function generateSmartResponse(text) {
         }
     }
     
-    // استخدام GPT إذا متاح
+    // استخدام Gemini للرد (الأولوية)
+    if (geminiAI) {
+        try {
+            console.log(`🌟 استخدام Gemini للرد على: "${text}"`);
+            
+            const model = geminiAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+            
+            const prompt = `أنت مساعد ذكي ومتطور يتحدث العربية الفصحى بطلاقة.
+
+🎯 مهمتك:
+- قدم ردوداً ذكية ومفيدة ومفصلة
+- استخدم لغة عربية فصحى مع التشكيل الصحيح
+- كن ودوداً ومهنياً في نفس الوقت
+- اطرح أسئلة ذكية لتفهم احتياجات العميل
+
+📚 معلومات الشركة:
+- نحن شركة استشارات متخصصة
+- نقدم خدمات استشارية احترافية
+- أسعارنا تنافسية وجودتنا عالية
+- مواعيدنا مرنة ومناسبة للجميع
+
+🚀 أسلوبك:
+- استخدم التشكيل العربي التلقائي
+- اطرح أسئلة استكشافية ذكية
+- قدم حلول عملية ومفصلة
+- كن مبدعاً في الردود
+
+❌ لا تفعل:
+- لا تذكر "اشترك في القناة"
+- لا تقدم ردوداً قصيرة جداً
+- لا تكون مملولاً أو متكرراً
+
+🌟 كن:
+- ذكياً ومبدعاً
+- مفيداً وعملياً
+- ودوداً ومهنياً
+- متطوراً في التفكير
+
+أجب على هذا النص: "${text}"`;
+
+            const result = await Promise.race([
+                model.generateContent({
+                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        maxOutputTokens: 200,
+                        temperature: 0.8
+                    }
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Gemini Timeout')), 3000)
+                )
+            ]);
+            
+            const geminiResponse = result.response.text().trim();
+            console.log(`✅ Gemini رد: "${geminiResponse}"`);
+            return geminiResponse;
+            
+        } catch (geminiError) {
+            console.log('⚠️ Gemini فشل، محاولة GPT...');
+        }
+    }
+    
+    // استخدام GPT إذا متاح (كبديل)
     if (openai) {
         try {
             console.log(`🤖 استخدام GPT للرد على: "${text}"`);
-                             const completion = await Promise.race([
-                     openai.chat.completions.create({
-                         model: "gpt-5",
-                         messages: [
-                                                 { 
-                             role: "system", 
-                             content: `أنت مساعد ذكي ومتطور يتحدث العربية الفصحى بطلاقة.
-                             
-                             🎯 مهمتك:
-                             - قدم ردوداً ذكية ومفيدة ومفصلة
-                             - استخدم لغة عربية فصحى مع التشكيل الصحيح
-                             - كن ودوداً ومهنياً في نفس الوقت
-                             - اطرح أسئلة ذكية لتفهم احتياجات العميل
-                             
-                             📚 معلومات الشركة:
-                             - نحن شركة استشارات متخصصة
-                             - نقدم خدمات استشارية احترافية
-                             - أسعارنا تنافسية وجودتنا عالية
-                             - مواعيدنا مرنة ومناسبة للجميع
-                             
-                             🚀 أسلوبك:
-                             - استخدم التشكيل العربي التلقائي
-                             - اطرح أسئلة استكشافية ذكية
-                             - قدم حلول عملية ومفصلة
-                             - كن مبدعاً في الردود
-                             
-                             ❌ لا تفعل:
-                             - لا تذكر "اشترك في القناة"
-                             - لا تقدم ردوداً قصيرة جداً
-                             - لا تكون مملولاً أو متكرراً
-                             
-                             🌟 كن:
-                             - ذكياً ومبدعاً
-                             - مفيداً وعملياً
-                             - ودوداً ومهنياً
-                             - متطوراً في التفكير`
-                         },
+            
+            const completion = await Promise.race([
+                openai.chat.completions.create({
+                    model: "gpt-5",
+                    messages: [
+                        { 
+                            role: "system", 
+                            content: `أنت مساعد ذكي ومتطور يتحدث العربية الفصحى بطلاقة.
+                            
+🎯 مهمتك:
+- قدم ردوداً ذكية ومفيدة ومفصلة
+- استخدم لغة عربية فصحى مع التشكيل الصحيح
+- كن ودوداً ومهنياً في نفس الوقت
+- اطرح أسئلة ذكية لتفهم احتياجات العميل
+
+📚 معلومات الشركة:
+- نحن شركة استشارات متخصصة
+- نقدم خدمات استشارية احترافية
+- أسعارنا تنافسية وجودتنا عالية
+- مواعيدنا مرنة ومناسبة للجميع
+
+🚀 أسلوبك:
+- استخدم التشكيل العربي التلقائي
+- اطرح أسئلة استكشافية ذكية
+- قدم حلول عملية ومفصلة
+- كن مبدعاً في الردود
+
+❌ لا تفعل:
+- لا تذكر "اشترك في القناة"
+- لا تقدم ردوداً قصيرة جداً
+- لا تكون مملولاً أو متكرراً
+
+🌟 كن:
+- ذكياً ومبدعاً
+- مفيداً وعملياً
+- ودوداً ومهنياً
+- متطوراً في التفكير`
+                        },
                         { role: "user", content: text }
                     ],
-                                         max_completion_tokens: 200,
-                     temperature: 0.8
+                    max_completion_tokens: 200,
+                    temperature: 0.8
                 }),
                 new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('Timeout')), 3000)
@@ -2018,6 +2217,7 @@ app.get('/api/info', (req, res) => {
         phoneNumber: config.twilioPhoneNumber,
         elevenLabs: config.elevenLabsApiKey ? 'متصل' : 'غير متصل',
         openai: config.openaiApiKey ? 'متصل' : 'غير متصل',
+        gemini: config.geminiApiKey ? 'متصل' : 'غير متصل',
         googleSpeech: googleSpeech ? 'متصل' : 'غير متصل',
         conversations: conversations.size,
         cacheSize: responseCache.size,
@@ -2030,8 +2230,8 @@ app.get('/api/info', (req, res) => {
             },
             output: {
                 elevenLabs: 'MP3 22.05kHz 64kbps',
-                ssml: 'GPT-5 لصياغة SSML محسن',
-                tashkeel: 'GPT-5 للتشكيل العربي الدقيق',
+                ssml: 'Gemini أولاً، ثم GPT-5 كبديل',
+                tashkeel: 'Gemini أولاً، ثم GPT-5 كبديل',
                 processing: 'معطلة مؤقتاً لاستقرار النظام'
             },
             performance: {
@@ -2055,6 +2255,7 @@ app.listen(PORT, () => {
     console.log(`   📱 Twilio Phone: ${config.twilioPhoneNumber ? '✅ موجود' : '❌ مفقود'}`);
     console.log(`   🔑 Twilio Credentials: ${config.twilioAccountSid && config.twilioAuthToken ? '✅ موجودة' : '❌ مفقودة'}`);
     console.log(`   🤖 OpenAI: ${config.openaiApiKey ? '✅ متصل' : '❌ غير متصل'}`);
+    console.log(`   🌟 Gemini AI: ${config.geminiApiKey ? '✅ متصل' : '❌ غير متصل'}`);
     console.log(`   🎵 ElevenLabs: ${config.elevenLabsApiKey ? '✅ متصل' : '❌ غير متصل'}`);
     console.log(`   🎭 Voice ID: ${config.elevenLabsVoiceId ? '✅ محدد' : '❌ غير محدد'}`);
     console.log(`   🎤 Google Speech: ${googleSpeech ? '✅ متصل' : '❌ غير متصل'}`);
@@ -2071,8 +2272,8 @@ app.listen(PORT, () => {
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
     console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps (معالجة معطلة مؤقتاً)');
     console.log('   🔧 المعالجة: معطلة مؤقتاً لاستقرار النظام');
-    console.log('   🤖 التشكيل: GPT-5 للتشكيل العربي الدقيق');
-console.log('   🎭 SSML: GPT-5 لصياغة SSML محسن');
+        console.log('   🤖 التشكيل: Gemini أولاً، ثم GPT-5 كبديل');
+    console.log('   🎭 SSML: Gemini أولاً، ثم GPT-5 كبديل');
     console.log('=====================================');
     
     // تحذير إذا كانت المتغيرات مفقودة
