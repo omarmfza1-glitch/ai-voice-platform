@@ -261,9 +261,9 @@ app.get('/', (req, res) => {
                         </div>
                         <div style="background: rgba(255,165,0,0.2); padding: 15px; border-radius: 10px;">
                             <h4>🎭 الإخراج (TTS) - عالي الجودة</h4>
-                            <p><strong>ElevenLabs:</strong> MP3 44.1kHz 128kbps</p>
+                            <p><strong>ElevenLabs:</strong> MP3 22.05kHz 64kbps</p>
                             <p><strong>SSML:</strong> تشكيل عربي + تعابير</p>
-                            <p><strong>معالجة:</strong> وضوح + دفء + تحسين صوت</p>
+                            <p><strong>معالجة:</strong> وضوح + تطبيع + تحسين صوت بشري + ضغط</p>
                         </div>
                         <div style="background: rgba(255,0,255,0.2); padding: 15px; border-radius: 10px;">
                             <h4>⚡ الأداء</h4>
@@ -504,8 +504,8 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9,    // تشابه أعلى مع الصوت الأصلي
                 style: 0.3,               // أسلوب أكثر طبيعية
                 use_speaker_boost: true,  // تعزيز المتحدث
-                // إعدادات جودة عالية
-                output_format: 'mp3_44100_128',  // MP3 عالي الجودة
+                // إعدادات جودة عالية مع حجم محسن
+                output_format: 'mp3_22050_64',  // MP3 متوسط الجودة لتقليل الحجم
                 voice_cloning: true,              // استنساخ صوت محسن
                 voice_enhancement: true           // تحسين الصوت
             },
@@ -514,7 +514,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -523,7 +523,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -532,7 +532,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -541,7 +541,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -550,7 +550,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -559,7 +559,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -568,7 +568,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -577,7 +577,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             },
@@ -586,7 +586,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
                 similarity_boost: 0.9, 
                 style: 0.3, 
                 use_speaker_boost: true,
-                output_format: 'mp3_44100_128',
+                output_format: 'mp3_22050_64',
                 voice_cloning: true,
                 voice_enhancement: true
             }
@@ -1293,48 +1293,47 @@ async function postProcessTTSOutput(audioBuffer) {
     try {
         console.log('🎭 بدء معالجة TTS عالية الجودة...');
         
-        // إعدادات معالجة TTS
+        // إعدادات معالجة TTS محسنة
         const ttsProcessing = {
             enhanceClarity: true,      // تحسين الوضوح
-            boostVolume: true,         // رفع مستوى الصوت
+            boostVolume: false,        // إيقاف رفع مستوى الصوت (يقلل الحجم)
             normalizeAudio: true,      // تطبيع الصوت
-            addWarmth: true,           // إضافة دفء للصوت
-            optimizeForVoice: true     // تحسين للصوت البشري
+            addWarmth: false,          // إيقاف إضافة دفء (يقلل الحجم)
+            optimizeForVoice: true,    // تحسين للصوت البشري
+            compressOutput: true       // ضغط المخرجات
         };
         
         let processedBuffer = audioBuffer;
         
-        // تحسين الوضوح
+        // تحسين الوضوح (محسن)
         if (ttsProcessing.enhanceClarity) {
             console.log('🔍 تطبيق تحسين الوضوح...');
             processedBuffer = applyClarityEnhancement(processedBuffer);
         }
         
-        // رفع مستوى الصوت
-        if (ttsProcessing.boostVolume) {
-            console.log('🔊 تطبيق رفع مستوى الصوت...');
-            processedBuffer = applyVolumeBoost(processedBuffer);
-        }
-        
-        // تطبيع الصوت
+        // تطبيع الصوت (محسن)
         if (ttsProcessing.normalizeAudio) {
             console.log('📊 تطبيق تطبيع الصوت...');
             processedBuffer = applyAudioNormalization(processedBuffer);
         }
         
-        // إضافة دفء للصوت
-        if (ttsProcessing.addWarmth) {
-            console.log('🔥 تطبيق إضافة دفء للصوت...');
-            processedBuffer = applyWarmthEnhancement(processedBuffer);
-        }
-        
-        // تحسين للصوت البشري
+        // تحسين للصوت البشري (محسن)
         if (ttsProcessing.optimizeForVoice) {
             console.log('🎤 تطبيق تحسين للصوت البشري...');
             processedBuffer = applyVoiceOptimization(processedBuffer);
         }
         
-        console.log('✅ تم الانتهاء من معالجة TTS عالية الجودة');
+        // ضغط المخرجات لتقليل الحجم
+        if (ttsProcessing.compressOutput) {
+            console.log('🗜️ تطبيق ضغط المخرجات...');
+            processedBuffer = applyOutputCompression(processedBuffer);
+        }
+        
+        console.log(`✅ تم الانتهاء من معالجة TTS عالية الجودة`);
+        console.log(`📊 الحجم الأصلي: ${audioBuffer.length} bytes`);
+        console.log(`📊 الحجم بعد المعالجة: ${processedBuffer.length} bytes`);
+        console.log(`📊 نسبة الضغط: ${((1 - processedBuffer.length / audioBuffer.length) * 100).toFixed(1)}%`);
+        
         return processedBuffer;
         
     } catch (error) {
@@ -1478,6 +1477,48 @@ function applyVoiceOptimization(audioBuffer) {
 }
 
 // ====================================
+// دالة ضغط المخرجات لتقليل الحجم
+// ====================================
+function applyOutputCompression(audioBuffer) {
+    const samples = new Float32Array(audioBuffer);
+    
+    // تطبيق ضغط ذكي
+    const compressionFactor = 0.8; // ضغط بنسبة 20%
+    const threshold = 0.05; // عتبة الضغط
+    
+    for (let i = 0; i < samples.length; i++) {
+        const sample = samples[i];
+        
+        // تطبيق ضغط ديناميكي
+        if (Math.abs(sample) > threshold) {
+            // ضغط العينات الكبيرة
+            samples[i] = Math.sign(sample) * (threshold + (Math.abs(sample) - threshold) * compressionFactor);
+        } else {
+            // الحفاظ على العينات الصغيرة
+            samples[i] = sample;
+        }
+        
+        // تقييد القيم
+        samples[i] = Math.max(-1, Math.min(1, samples[i]));
+    }
+    
+    // تقليل عدد العينات (downsampling) للحجم الكبير
+    if (samples.length > 1000000) { // إذا كان الحجم أكبر من 1MB
+        console.log('📉 تطبيق downsampling لتقليل الحجم...');
+        const downsampledSamples = [];
+        const skipFactor = 2; // تخطي كل عينة ثانية
+        
+        for (let i = 0; i < samples.length; i += skipFactor) {
+            downsampledSamples.push(samples[i]);
+        }
+        
+        return Buffer.from(new Float32Array(downsampledSamples).buffer);
+    }
+    
+    return Buffer.from(samples.buffer);
+}
+
+// ====================================
 // معالجة تحديثات حالة Twilio
 // ====================================
 app.post('/twilio/status', (req, res) => {
@@ -1576,9 +1617,9 @@ app.get('/api/info', (req, res) => {
                 processing: 'تقليل ضوضاء + إلغاء صدى'
             },
             output: {
-                elevenLabs: 'MP3 44.1kHz 128kbps',
+                elevenLabs: 'MP3 22.05kHz 64kbps',
                 ssml: 'تشكيل عربي + تعابير',
-                processing: 'وضوح + دفء + تحسين صوت بشري'
+                processing: 'وضوح + تطبيع + تحسين صوت بشري + ضغط'
             },
             performance: {
                 responseTime: '< 1 ثانية',
@@ -1615,8 +1656,8 @@ app.listen(PORT, () => {
     console.log('=====================================');
     console.log('🎵 جودة الصوت:');
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
-    console.log('   🎭 الإخراج: MP3 44.1kHz 128kbps + معالجة TTS عالية');
-    console.log('   🔧 المعالجة: وضوح + دفء + تحسين صوت بشري');
+    console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps + معالجة TTS محسنة + ضغط');
+    console.log('   🔧 المعالجة: وضوح + تطبيع + تحسين صوت بشري + ضغط ذكي');
     console.log('=====================================');
     
     // تحذير إذا كانت المتغيرات مفقودة
