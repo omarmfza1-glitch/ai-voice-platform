@@ -17,7 +17,7 @@
 - **Node.js & Express.js** - إطار العمل
 - **MongoDB Atlas** - قاعدة البيانات
 - **Twilio Voice API** - المكالمات الصوتية
-- **OpenAI GPT-4** - الذكاء الاصطناعي
+- **OpenAI GPT-5o-mini** - الذكاء الاصطناعي
 - **ElevenLabs** - تحويل النص إلى صوت طبيعي
 - **Redis Cache** - تحسين السرعة
 

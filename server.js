@@ -1040,10 +1040,10 @@ async function generateSmartResponse(text) {
     if (openai) {
         try {
             console.log(`🤖 استخدام GPT للرد على: "${text}"`);
-            const completion = await Promise.race([
-                openai.chat.completions.create({
-                    model: "gpt-4o-mini",
-                    messages: [
+                             const completion = await Promise.race([
+                     openai.chat.completions.create({
+                         model: "gpt-5o-mini",
+                         messages: [
                         { 
                             role: "system", 
                             content: `أنت مساعد ودود يتحدث العربية الفصحى.
