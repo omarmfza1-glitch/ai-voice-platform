@@ -13,18 +13,54 @@ const PORT = process.env.PORT || 3000;
 
 // الإعدادات
 const config = {
-    mongoUri: process.env.MONGODB_URI || 'mongodb://localhost:27017/aivoice',
+    mongoUri: process.env.MONGODB_URI,
     twilioAccountSid: process.env.TWILIO_ACCOUNT_SID,
     twilioAuthToken: process.env.TWILIO_AUTH_TOKEN,
     twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER,
-    openaiApiKey: process.env.OPENAI_API_KEY
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    elevenLabsApiKey: process.env.ELEVENLABS_API_KEY,
+    elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID
 };
 
-// التحقق من OpenAI
-if (!config.openaiApiKey) {
-    console.error('⚠️ OPENAI_API_KEY غير موجود!');
+// التحقق من المتغيرات البيئية المطلوبة
+const requiredEnvVars = [
+    'TWILIO_ACCOUNT_SID',
+    'TWILIO_AUTH_TOKEN', 
+    'TWILIO_PHONE_NUMBER',
+    'OPENAI_API_KEY',
+    'ELEVENLABS_API_KEY',
+    'ELEVENLABS_VOICE_ID'
+];
+
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+    console.error('❌ المتغيرات البيئية التالية مفقودة:');
+    missingVars.forEach(varName => console.error(`   - ${varName}`));
+    console.error('⚠️ تأكد من إضافة هذه المتغيرات في Heroku Config Vars');
 } else {
+    console.log('✅ جميع المتغيرات البيئية المطلوبة موجودة');
+}
+
+// التحقق من ElevenLabs
+if (config.elevenLabsApiKey) {
+    console.log('✅ ElevenLabs API Key موجود');
+} else {
+    console.error('⚠️ ELEVENLABS_API_KEY غير موجود في Config Vars');
+}
+
+// التحقق من OpenAI
+if (config.openaiApiKey) {
     console.log('✅ OpenAI API Key موجود');
+} else {
+    console.error('⚠️ OPENAI_API_KEY غير موجود في Config Vars');
+}
+
+// التحقق من Twilio
+if (config.twilioAccountSid && config.twilioAuthToken && config.twilioPhoneNumber) {
+    console.log('✅ Twilio credentials موجودة');
+} else {
+    console.error('⚠️ Twilio credentials غير موجودة في Config Vars');
 }
 
 // Middleware
@@ -275,6 +311,104 @@ function generateSSML(text, isArabic, emotion = 'friendly') {
 }
 
 // ====================================
+// دالة تحويل النص إلى صوت باستخدام ElevenLabs
+// ====================================
+async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
+    try {
+        // التحقق من وجود API Key
+        if (!config.elevenLabsApiKey) {
+            throw new Error('ELEVENLABS_API_KEY غير موجود في Config Vars');
+        }
+        
+        if (!config.elevenLabsVoiceId) {
+            throw new Error('ELEVENLABS_VOICE_ID غير موجود في Config Vars');
+        }
+        
+        // تحديد الصوت المناسب للغة
+        const voiceMap = {
+            'ar': config.elevenLabsVoiceId, // العربية
+            'en': config.elevenLabsVoiceId, // الإنجليزية
+            'hi': config.elevenLabsVoiceId, // الهندية
+            'bn': config.elevenLabsVoiceId, // البنغالية
+            'ur': config.elevenLabsVoiceId, // الأوردو
+            'tl': config.elevenLabsVoiceId, // الفلبينية
+            'id': config.elevenLabsVoiceId, // الأندونيسية
+            'ps': config.elevenLabsVoiceId, // الأفغانية
+            'sw': config.elevenLabsVoiceId, // السواحيلية
+            'tr': config.elevenLabsVoiceId  // التركية
+        };
+        
+        const selectedVoiceId = voiceId || voiceMap[language] || config.elevenLabsVoiceId;
+        
+        // إعدادات الصوت حسب اللغة
+        const voiceSettings = {
+            'ar': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'en': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'hi': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'bn': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'ur': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'tl': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'id': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'ps': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'sw': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true },
+            'tr': { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true }
+        };
+        
+        const settings = voiceSettings[language] || voiceSettings['ar'];
+        
+        console.log(`🎵 ElevenLabs: إنشاء صوت للغة "${language}" باستخدام Voice ID: ${selectedVoiceId}`);
+        
+        // طلب إلى ElevenLabs
+        const response = await axios.post(
+            `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`,
+            {
+                text: text,
+                model_id: "eleven_multilingual_v2", // نموذج متعدد اللغات
+                voice_settings: settings
+            },
+            {
+                headers: {
+                    'Accept': 'audio/mpeg',
+                    'xi-api-key': config.elevenLabsApiKey,
+                    'Content-Type': 'application/json'
+                },
+                responseType: 'arraybuffer',
+                timeout: 30000 // 30 ثانية
+            }
+        );
+        
+        // حفظ الملف الصوتي مؤقتاً
+        const audioBuffer = Buffer.from(response.data);
+        const fileName = `audio_${Date.now()}.mp3`;
+        const filePath = `./temp/${fileName}`;
+        
+        // إنشاء مجلد temp إذا لم يكن موجوداً
+        const fs = require('fs');
+        if (!fs.existsSync('./temp')) {
+            fs.mkdirSync('./temp');
+        }
+        
+        fs.writeFileSync(filePath, audioBuffer);
+        
+        console.log(`✅ ElevenLabs: تم إنشاء الصوت "${fileName}"`);
+        
+        return {
+            success: true,
+            filePath: filePath,
+            fileName: fileName,
+            duration: Math.ceil(audioBuffer.length / 16000) // تقدير المدة
+        };
+        
+    } catch (error) {
+        console.error('❌ خطأ ElevenLabs:', error.message);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
+// ====================================
 // استقبال المكالمات - محسّن للسرعة
 // ====================================
 app.post('/api/voice/incoming', async (req, res) => {
@@ -294,12 +428,22 @@ app.post('/api/voice/incoming', async (req, res) => {
     
     const twiml = new twilio.twiml.VoiceResponse();
     
-    // ترحيب سريع مع SSML
-    const greeting = generateSSML('أهلاً وسهلاً. تفضل بالحديث', true, 'friendly');
-    twiml.say({
-        voice: 'Polly.Zeina',
-        language: 'arb'
-    }, greeting);
+    // ترحيب سريع باستخدام ElevenLabs
+    const greeting = 'أهلاً وسهلاً. تفضل بالحديث';
+    
+    // إنشاء الصوت باستخدام ElevenLabs
+    const audioResult = await textToSpeechElevenLabs(greeting, 'ar');
+    
+    if (audioResult.success) {
+        // تشغيل الملف الصوتي
+        twiml.play(`/api/audio/${audioResult.fileName}`);
+    } else {
+        // استخدام Twilio كبديل في حالة فشل ElevenLabs
+        twiml.say({
+            voice: 'Polly.Zeina',
+            language: 'arb'
+        }, greeting);
+    }
     
     // استخدام Gather مع إعدادات محسنة للعربية
     const gather = twiml.gather({
@@ -361,7 +505,7 @@ app.all('/api/voice/listen/:conversationId', async (req, res) => {
 });
 
 // ====================================
-// معالجة سريعة للإدخال مع كاش
+// معالجة الإدخال مع كاش
 // ====================================
 async function processUserInputFast(conversationId, text, res) {
     const conversation = conversations.get(conversationId);
@@ -389,18 +533,24 @@ async function processUserInputFast(conversationId, text, res) {
     );
     
     if (wantsToEnd) {
-        // وداع سريع مع SSML
-        const farewellSSML = generateSSML(
-            'شكراً لك. أتمنى لك يوماً سعيداً. مع السلامة!', 
-            true, 
-            'friendly'
-        );
+        // وداع سريع باستخدام ElevenLabs
+        const farewellText = 'شكراً لك. أتمنى لك يوماً سعيداً. مع السلامة!';
         
         const twiml = new twilio.twiml.VoiceResponse();
-        twiml.say({
-            voice: 'Polly.Zeina',
-            language: 'arb'
-        }, farewellSSML);
+        
+        // إنشاء الصوت باستخدام ElevenLabs
+        const audioResult = await textToSpeechElevenLabs(farewellText, 'ar');
+        
+        if (audioResult.success) {
+            twiml.play(`/api/audio/${audioResult.fileName}`);
+        } else {
+            // استخدام Twilio كبديل
+            twiml.say({
+                voice: 'Polly.Zeina',
+                language: 'arb'
+            }, farewellText);
+        }
+        
         twiml.hangup();
         
         res.type('text/xml');
@@ -431,27 +581,44 @@ async function processUserInputFast(conversationId, text, res) {
         timestamp: Date.now()
     });
     
-    // إنشاء رد SSML
-    const responseSSML = generateSSML(responseText, true, 'friendly');
-    
-    const twiml = new twilio.twiml.VoiceResponse();
-    
-    // الرد مع إمكانية المقاطعة
-    const gather = twiml.gather({
-        input: 'speech dtmf', // صوت أو أزرار
-        language: 'ar-SA',
-        speechTimeout: 'auto',
-        timeout: 2,
-        action: `/api/voice/process-speech/${conversationId}`,
-        method: 'POST',
-        bargein: true, // السماح بالمقاطعة
-        bargeInWords: 'stop,توقف,مرحبا' // كلمات المقاطعة
-    });
-    
-    gather.say({
-        voice: 'Polly.Zeina',
-        language: 'arb'
-    }, responseSSML);
+            // إنشاء رد باستخدام ElevenLabs
+        const twiml = new twilio.twiml.VoiceResponse();
+        
+        // إنشاء الصوت باستخدام ElevenLabs
+        const audioResult = await textToSpeechElevenLabs(responseText, conversation.language || 'ar');
+        
+        if (audioResult.success) {
+            // الرد مع إمكانية المقاطعة
+            const gather = twiml.gather({
+                input: 'speech dtmf', // صوت أو أزرار
+                language: 'ar-SA',
+                speechTimeout: 'auto',
+                timeout: 2,
+                action: `/api/voice/process-speech/${conversationId}`,
+                method: 'POST',
+                bargein: true, // السماح بالمقاطعة
+                bargeInWords: 'stop,توقف,مرحبا' // كلمات المقاطعة
+            });
+            
+            gather.play(`/api/audio/${audioResult.fileName}`);
+        } else {
+            // استخدام Twilio كبديل في حالة فشل ElevenLabs
+            const gather = twiml.gather({
+                input: 'speech dtmf',
+                language: 'ar-SA',
+                speechTimeout: 'auto',
+                timeout: 2,
+                action: `/api/voice/process-speech/${conversationId}`,
+                method: 'POST',
+                bargein: true,
+                bargeInWords: 'stop,توقف,مرحبا'
+            });
+            
+            gather.say({
+                voice: 'Polly.Zeina',
+                language: 'arb'
+            }, responseText);
+        }
     
     // إذا لم يتحدث
     twiml.redirect(`/api/voice/listen/${conversationId}`);
@@ -626,16 +793,77 @@ app.get('/api/conversations', (req, res) => {
 });
 
 // ====================================
+// تقديم الملفات الصوتية
+// ====================================
+app.get('/api/audio/:fileName', (req, res) => {
+    const { fileName } = req.params;
+    const filePath = `./temp/${fileName}`;
+    
+    // التحقق من وجود الملف
+    const fs = require('fs');
+    if (fs.existsSync(filePath)) {
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+        
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+        
+        // حذف الملف بعد إرساله (للتوفير)
+        fileStream.on('end', () => {
+            setTimeout(() => {
+                try {
+                    fs.unlinkSync(filePath);
+                    console.log(`🗑️ تم حذف الملف: ${fileName}`);
+                } catch (error) {
+                    console.log(`⚠️ خطأ في حذف الملف: ${fileName}`);
+                }
+            }, 5000); // انتظار 5 ثوانٍ
+        });
+    } else {
+        res.status(404).send('ملف صوتي غير موجود');
+    }
+});
+
+// ====================================
+// معلومات النظام
+// ====================================
+app.get('/api/info', (req, res) => {
+    res.json({
+        phoneNumber: config.twilioPhoneNumber,
+        elevenLabs: config.elevenLabsApiKey ? 'متصل' : 'غير متصل',
+        openai: config.openaiApiKey ? 'متصل' : 'غير متصل',
+        conversations: conversations.size,
+        cacheSize: responseCache.size
+    });
+});
+
+// ====================================
 // تشغيل الخادم
 // ====================================
 app.listen(PORT, () => {
     console.log('=====================================');
     console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
-    console.log(`📱 Twilio: ${config.twilioPhoneNumber}`);
-    console.log(`🤖 OpenAI: ${openai ? '✅ متصل' : '❌ غير متصل'}`);
-    console.log('⚡ السرعة: محسّنة للأداء الفائق');
-    console.log('🎭 SSML: مفعّل للصوت الطبيعي');
-    console.log('🔄 المقاطعة: متاحة');
-    console.log('🌍 العربية: دعم كامل مع التشكيل');
+    console.log(`🌐 البيئة: ${process.env.NODE_ENV || 'development'}`);
     console.log('=====================================');
+    console.log('📋 حالة المتغيرات البيئية:');
+    console.log(`   📱 Twilio Phone: ${config.twilioPhoneNumber ? '✅ موجود' : '❌ مفقود'}`);
+    console.log(`   🔑 Twilio Credentials: ${config.twilioAccountSid && config.twilioAuthToken ? '✅ موجودة' : '❌ مفقودة'}`);
+    console.log(`   🤖 OpenAI: ${config.openaiApiKey ? '✅ متصل' : '❌ غير متصل'}`);
+    console.log(`   🎵 ElevenLabs: ${config.elevenLabsApiKey ? '✅ متصل' : '❌ غير متصل'}`);
+    console.log(`   🎭 Voice ID: ${config.elevenLabsVoiceId ? '✅ محدد' : '❌ غير محدد'}`);
+    console.log(`   🗄️ MongoDB: ${config.mongoUri ? '✅ متصل' : '❌ غير متصل'}`);
+    console.log('=====================================');
+    console.log('⚡ المميزات:');
+    console.log('   🎭 صوت طبيعي: ElevenLabs + SSML');
+    console.log('   🔄 المقاطعة: متاحة في أي وقت');
+    console.log('   🌍 10 لغات: العربية أولاً مع التشكيل');
+    console.log('   💾 كاش ذكي: لتحسين الأداء');
+    console.log('=====================================');
+    
+    // تحذير إذا كانت المتغيرات مفقودة
+    if (missingVars.length > 0) {
+        console.log('⚠️  تحذير: بعض المتغيرات البيئية مفقودة');
+        console.log('   تأكد من إضافة جميع المتغيرات في Heroku Config Vars');
+        console.log('   راجع ملف HEROKU_DEPLOY.md للتعليمات');
+    }
 });

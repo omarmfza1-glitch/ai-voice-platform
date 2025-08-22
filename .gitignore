@@ -1,11 +1,73 @@
-node_modules/
+# ====================================
+# ملفات ومجلدات مستبعدة من Git
+# ====================================
+
+# المتغيرات البيئية
 .env
 .env.local
 .env.production
+.env.development
+.env.test
+
+# المجلدات المؤقتة
+temp/
+tmp/
+audio_*.mp3
+logs/
+
+# ملفات Node.js
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.DS_Store
+package-lock.json
+
+# ملفات التشغيل
 *.log
-dist/
+*.pid
+*.seed
+*.pid.lock
+
+# ملفات قاعدة البيانات
+*.db
+*.sqlite
+*.sqlite3
+
+# ملفات النظام
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ملفات IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ملفات Heroku
+.heroku/
+Procfile.windows
+
+# ملفات الاختبار
+coverage/
+.nyc_output/
+test-results/
+
+# ملفات البناء
 build/
+dist/
+out/
+
+# ملفات النسخ الاحتياطية
+*.bak
+*.backup
+*.old
+
+# ملفات التحميل
+downloads/
+uploads/
+
+# ملفات التكوين المحلية
+config.local.js
+settings.local.json

@@ -1,15 +1,35 @@
 {
   "name": "ai-voice-platform",
   "version": "1.0.0",
-  "description": "AI Voice Platform with Multi-language Support",
+  "description": "AI Voice Platform with Multi-language Support using ElevenLabs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "local": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "engines": {
     "node": "18.x",
     "npm": "9.x"
+  },
+  "keywords": [
+    "ai",
+    "voice",
+    "platform",
+    "elevenlabs",
+    "twilio",
+    "openai",
+    "arabic",
+    "multilingual",
+    "call-center",
+    "automation"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/ai-voice-platform.git"
   },
   "dependencies": {
     "axios": "^1.6.2",
@@ -24,5 +44,8 @@
     "redis": "^4.6.12",
     "twilio": "^4.19.3",
     "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
   }
 }
