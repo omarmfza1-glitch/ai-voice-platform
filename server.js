@@ -617,6 +617,7 @@ function generateSSML(text, isArabic, emotion = 'friendly') {
      ssml += `</prosody>`;
      ssml += `</speak>`;
      
+     console.log('🎭 تم إنشاء SSML محسن للعربية (معالجة TTS معطلة مؤقتاً)');
      return ssml;
  }
 
@@ -753,7 +754,7 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
          let finalText = text;
          if (language === 'ar') {
              finalText = generateSSML(text, true, 'friendly');
-             console.log('🎭 تم إنشاء SSML محسن للعربية');
+             console.log('🎭 تم إنشاء SSML محسن للعربية (معالجة TTS معطلة مؤقتاً)');
          }
          
          // طلب إلى ElevenLabs
@@ -786,8 +787,15 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
             fs.mkdirSync('./temp');
         }
         
-        // تطبيق معالجة ما بعد التسجيل للإخراج TTS
-        const processedAudioBuffer = await postProcessTTSOutput(audioBuffer);
+        // تطبيق معالجة ما بعد التسجيل للإخراج TTS (معطلة مؤقتاً)
+        const processedAudioBuffer = await postProcessTTSOutput(audioBuffer, {
+            enhanceClarity: false,
+            boostVolume: false,
+            normalizeAudio: false,
+            addWarmth: false,
+            optimizeVoice: false,
+            compressOutput: false
+        });
         
         // التحقق من نجاح المعالجة
         if (processedAudioBuffer.length > audioBuffer.length * 1.5) {
@@ -797,14 +805,14 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
             fs.writeFileSync(filePath, processedAudioBuffer);
         }
         
-        console.log(`✅ ElevenLabs: تم إنشاء الصوت "${fileName}" مع معالجة عالية الجودة`);
+        console.log(`✅ ElevenLabs: تم إنشاء الصوت "${fileName}" (معالجة معطلة مؤقتاً)`);
         
         return {
             success: true,
             filePath: filePath,
             fileName: fileName,
             duration: Math.ceil(processedAudioBuffer.length / 16000), // تقدير المدة
-            quality: 'عالي الجودة - معالجة محسنة'
+            quality: 'عالي الجودة - معالجة معطلة مؤقتاً'
         };
         
     } catch (error) {
@@ -1478,66 +1486,66 @@ async function postProcessAudio(audioBuffer) {
 // ====================================
 // معالجة TTS عالية الجودة - للإخراج
 // ====================================
-async function postProcessTTSOutput(audioBuffer) {
+async function postProcessTTSOutput(audioBuffer, options = {}) {
     try {
         console.log('🎭 بدء معالجة TTS عالية الجودة...');
         
-        // إعدادات معالجة TTS محسنة
-        const ttsProcessing = {
-            enhanceClarity: false,     // إيقاف تحسين الوضوح مؤقتاً
-            boostVolume: false,        // إيقاف رفع مستوى الصوت (يقلل الحجم)
-            normalizeAudio: false,     // إيقاف تطبيع الصوت مؤقتاً
-            addWarmth: false,          // إيقاف إضافة دفء (يقلل الحجم)
-            optimizeForVoice: false,   // إيقاف تحسين للصوت البشري مؤقتاً
-            compressOutput: false      // إيقاف ضغط المخرجات مؤقتاً
-        };
+        // ⚠️ إيقاف جميع المعالجات مؤقتاً لاستقرار النظام
+        console.log('⚠️ تم إيقاف جميع معالجات TTS مؤقتاً لاستقرار النظام');
+        console.log('⚠️ استخدام الصوت الأصلي بدون معالجة');
         
-        console.log('⚠️ تم إيقاف معالجة TTS مؤقتاً لتجنب مشاكل الحجم');
+        // إرجاع الصوت الأصلي بدون معالجة
+        return audioBuffer;
         
+        /* تم تعطيل المعالجات مؤقتاً
+        const {
+            boostVolume = false,
+            addWarmth = false,
+            enhanceClarity = false,
+            normalizeAudio = false,
+            optimizeVoice = false,
+            compressOutput = false
+        } = options;
+
         let processedBuffer = audioBuffer;
-        
-        // تحسين الوضوح (محسن)
-        if (ttsProcessing.enhanceClarity) {
+
+        if (enhanceClarity) {
             console.log('🔍 تطبيق تحسين الوضوح...');
             processedBuffer = applyClarityEnhancement(processedBuffer);
         }
-        
-        // تطبيع الصوت (محسن)
-        if (ttsProcessing.normalizeAudio) {
-            console.log('📊 تطبيق تطبيع الصوت...');
-            processedBuffer = applyAudioNormalization(processedBuffer);
+
+        if (boostVolume) {
+            console.log('🔊 تطبيق رفع مستوى الصوت...');
+            processedBuffer = applyVolumeBoost(processedBuffer);
         }
-        
-        // تحسين للصوت البشري (محسن)
-        if (ttsProcessing.optimizeForVoice) {
+
+        if (normalizeAudio) {
+            console.log('📊 تطبيق تطبيع الصوت...');
+            processedBuffer = applyNormalization(processedBuffer);
+        }
+
+        if (addWarmth) {
+            console.log('🔥 تطبيق إضافة دفء للصوت...');
+            processedBuffer = applyWarmthEnhancement(processedBuffer);
+        }
+
+        if (optimizeVoice) {
             console.log('🎤 تطبيق تحسين للصوت البشري...');
             processedBuffer = applyVoiceOptimization(processedBuffer);
         }
-        
-        // ضغط المخرجات لتقليل الحجم
-        if (ttsProcessing.compressOutput) {
-            console.log('🗜️ تطبيق ضغط المخرجات...');
+
+        if (compressOutput) {
+            console.log('🗜️ تطبيق ضغط الصوت...');
             processedBuffer = applyOutputCompression(processedBuffer);
         }
-        
-        console.log(`✅ تم الانتهاء من معالجة TTS عالية الجودة`);
-        console.log(`📊 الحجم الأصلي: ${audioBuffer.length} bytes`);
-        console.log(`📊 الحجم بعد المعالجة: ${processedBuffer.length} bytes`);
-        
-        // التحقق من أن المعالجة قللت الحجم
-        if (processedBuffer.length > audioBuffer.length * 1.5) {
-            console.log('⚠️ تحذير: المعالجة زادت الحجم، إرجاع الصوت الأصلي');
-            return audioBuffer;
-        }
-        
-        const compressionRatio = ((1 - processedBuffer.length / audioBuffer.length) * 100).toFixed(1);
-        console.log(`📊 نسبة الضغط: ${compressionRatio}%`);
-        
+
+        console.log('✅ تم الانتهاء من معالجة TTS عالية الجودة');
         return processedBuffer;
-        
+        */
     } catch (error) {
         console.error('❌ خطأ في معالجة TTS:', error.message);
-        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
+        console.log('⚠️ المعالجة فشلت، استخدام الصوت الأصلي');
+        return audioBuffer;
     }
 }
 
@@ -1826,7 +1834,7 @@ app.get('/api/info', (req, res) => {
             output: {
                 elevenLabs: 'MP3 22.05kHz 64kbps',
                 ssml: 'تشكيل عربي + تعابير',
-                processing: 'وضوح + تطبيع + تحسين صوت بشري + ضغط'
+                processing: 'معطلة مؤقتاً لاستقرار النظام'
             },
             performance: {
                 responseTime: '< 1 ثانية',
@@ -1863,8 +1871,8 @@ app.listen(PORT, () => {
     console.log('=====================================');
     console.log('🎵 جودة الصوت:');
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
-    console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps + معالجة TTS محسنة + ضغط');
-    console.log('   🔧 المعالجة: وضوح + تطبيع + تحسين صوت بشري + ضغط ذكي');
+    console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps (معالجة معطلة مؤقتاً)');
+    console.log('   🔧 المعالجة: معطلة مؤقتاً لاستقرار النظام');
     console.log('=====================================');
     
     // تحذير إذا كانت المتغيرات مفقودة
