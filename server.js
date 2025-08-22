@@ -32,7 +32,15 @@ const requiredEnvVars = [
     'ELEVENLABS_VOICE_ID'
 ];
 
+// متغيرات Google (اختيارية)
+const optionalEnvVars = [
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'GOOGLE_CREDENTIALS_JSON',
+    'GOOGLE_PROJECT_ID'
+];
+
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+const missingOptionalVars = optionalEnvVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
     console.error('❌ المتغيرات البيئية التالية مفقودة:');
@@ -40,6 +48,12 @@ if (missingVars.length > 0) {
     console.error('⚠️ تأكد من إضافة هذه المتغيرات في Heroku Config Vars');
 } else {
     console.log('✅ جميع المتغيرات البيئية المطلوبة موجودة');
+}
+
+if (missingOptionalVars.length > 0) {
+    console.log('⚠️ المتغيرات الاختيارية التالية مفقودة:');
+    missingOptionalVars.forEach(varName => console.log(`   - ${varName}`));
+    console.log('   Google Speech سيعمل بدون هذه المتغيرات');
 }
 
 // التحقق من ElevenLabs
@@ -61,6 +75,38 @@ if (config.twilioAccountSid && config.twilioAuthToken && config.twilioPhoneNumbe
     console.log('✅ Twilio credentials موجودة');
 } else {
     console.error('⚠️ Twilio credentials غير موجودة في Config Vars');
+}
+
+// إعداد Google Speech-to-Text
+let googleSpeech = null;
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CREDENTIALS_JSON) {
+    try {
+        const speech = require('@google-cloud/speech');
+        
+        // إعداد credentials
+        let credentials = null;
+        if (process.env.GOOGLE_CREDENTIALS_JSON) {
+            credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+        }
+        
+        googleSpeech = new speech.SpeechClient({
+            credentials: credentials,
+            projectId: process.env.GOOGLE_PROJECT_ID
+        });
+        
+        console.log('✅ Google Speech-to-Text جاهز');
+    } catch (error) {
+        console.error('❌ خطأ Google Speech:', error.message);
+    }
+} else {
+    console.log('⚠️ GOOGLE_APPLICATION_CREDENTIALS غير موجود في Config Vars');
+}
+
+// التحقق من Google Speech
+if (googleSpeech) {
+    console.log('✅ Google Speech-to-Text متصل');
+} else {
+    console.log('⚠️ Google Speech-to-Text غير متصل (اختياري)');
 }
 
 // Middleware
@@ -210,36 +256,102 @@ app.get('/', (req, res) => {
 });
 
 // ====================================
-// دالة إضافة التشكيل للنص العربي
+// دالة إضافة التشكيل للنص العربي - محسنة
 // ====================================
 function addTashkeel(text) {
-    // تشكيل بسيط للكلمات الشائعة
+    // تشكيل شامل للكلمات الشائعة
     const tashkeelMap = {
+        // تحيات
         'مرحبا': 'مَرْحَباً',
         'السلام عليكم': 'السَّلامُ عَلَيْكُم',
+        'وعليكم السلام': 'وَعَلَيْكُمُ السَّلامُ',
+        'أهلا': 'أَهْلاً',
+        'وسهلا': 'وَسَهْلاً',
+        'أهلاً وسهلاً': 'أَهْلاً وَسَهْلاً',
+        
+        // أسئلة
         'كيف': 'كَيْفَ',
+        'كيف حالك': 'كَيْفَ حَالُكَ',
+        'كيف الحال': 'كَيْفَ الحَالُ',
+        'متى': 'مَتَى',
+        'أين': 'أَيْنَ',
+        'ما': 'مَا',
+        'لماذا': 'لِمَاذَا',
+        
+        // أفعال
         'يمكنني': 'يُمْكِنُنِي',
-        'مساعدتك': 'مُسَاعَدَتُكَ',
+        'أقدر': 'أَقْدِرُ',
+        'أريد': 'أُرِيدُ',
+        'أحتاج': 'أَحْتَاجُ',
+        'أفهم': 'أَفْهَمُ',
+        'أعرف': 'أَعْرِفُ',
+        
+        // أسماء
         'موعد': 'مَوْعِد',
+        'سعر': 'سِعْر',
+        'موقع': 'مَوْقِع',
+        'خدمة': 'خِدْمَة',
+        'مساعدة': 'مُسَاعَدَة',
+        'معلومات': 'مَعْلُومَات',
+        
+        // أيام
         'الأحد': 'الأَحَد',
         'الإثنين': 'الإثْنَيْن',
+        'الثلاثاء': 'الثُّلَاثَاء',
+        'الأربعاء': 'الأَرْبَعَاء',
+        'الخميس': 'الخَمِيس',
+        'الجمعة': 'الجُمُعَة',
+        'السبت': 'السَّبْت',
+        
+        // أرقام
+        'واحد': 'وَاحِد',
+        'اثنان': 'اثْنَان',
+        'ثلاثة': 'ثَلَاثَة',
+        'أربعة': 'أَرْبَعَة',
+        'خمسة': 'خَمْسَة',
+        'عشرة': 'عَشَرَة',
+        'مائة': 'مِائَة',
+        'ألف': 'أَلْف',
+        
+        // عملة
         'ريال': 'رِيَال',
+        'دولار': 'دُولَار',
+        'يورو': 'يُورُو',
+        
+        // تعابير
         'شكرا': 'شُكْراً',
+        'شكرا لك': 'شُكْراً لَكَ',
+        'العفو': 'العَفْوُ',
         'مع السلامة': 'مَعَ السَّلامَة',
         'وداعا': 'وَدَاعاً',
+        'إلى اللقاء': 'إِلَى اللِّقَاء',
         'نعم': 'نَعَم',
         'لا': 'لا',
+        'أبدا': 'أَبَداً',
+        
+        // أوقات
         'صباح': 'صَبَاح',
         'مساء': 'مَسَاء',
+        'ليل': 'لَيْل',
+        'نهار': 'نَهَار',
         'الخير': 'الخَيْر',
-        'أهلا': 'أَهْلاً',
-        'وسهلا': 'وَسَهْلاً'
+        'صباح الخير': 'صَبَاحُ الخَيْر',
+        'مساء الخير': 'مَسَاءُ الخَيْر',
+        
+        // مشاعر
+        'ممتاز': 'مُمْتاز',
+        'جيد': 'جَيِّد',
+        'سيء': 'سَيِّء',
+        'جميل': 'جَمِيل',
+        'رائع': 'رَائِع',
+        'مدهش': 'مُدْهِش'
     };
     
     // استبدال الكلمات بنسخها المشكلة
     let tashkeelText = text;
     for (const [word, tashkeel] of Object.entries(tashkeelMap)) {
-        tashkeelText = tashkeelText.replace(new RegExp(word, 'g'), tashkeel);
+        const regex = new RegExp(`\\b${word}\\b`, 'gi');
+        tashkeelText = tashkeelText.replace(regex, tashkeel);
     }
     
     return tashkeelText;
@@ -401,6 +513,81 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
         
     } catch (error) {
         console.error('❌ خطأ ElevenLabs:', error.message);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
+// ====================================
+// دالة Google Speech-to-Text محسنة
+// ====================================
+async function googleSpeechToText(audioBuffer, language = 'ar-SA') {
+    try {
+        if (!googleSpeech) {
+            throw new Error('Google Speech غير متاح');
+        }
+        
+        console.log('🎤 Google Speech: بدء التعرف على الكلام...');
+        
+        // إعداد الصوت
+        const audio = {
+            content: audioBuffer.toString('base64')
+        };
+        
+        // إعدادات محسنة للعربية
+        const config = {
+            encoding: 'MP3',
+            sampleRateHertz: 8000,
+            languageCode: language,
+            model: 'phone_call',        // نموذج محسن للمكالمات
+            useEnhanced: true,          // تحسين الجودة
+            enableAutomaticPunctuation: true,  // علامات الترقيم
+            enableWordTimeOffsets: false,       // لا نحتاج أوقات الكلمات
+            enableWordConfidence: true,         // ثقة الكلمات
+            alternativeLanguageCodes: ['ar-SA', 'en-US', 'ar-EG']  // لغات بديلة
+        };
+        
+        const request = {
+            audio: audio,
+            config: config
+        };
+        
+        console.log('🚀 إرسال إلى Google Speech...');
+        
+        // طلب التعرف مع timeout
+        const [response] = await Promise.race([
+            googleSpeech.recognize(request),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Google Speech timeout')), 10000)
+            )
+        ]);
+        
+        if (!response.results || response.results.length === 0) {
+            throw new Error('لا توجد نتائج من Google Speech');
+        }
+        
+        // استخراج النص مع الثقة
+        const transcription = response.results
+            .map(result => result.alternatives[0])
+            .filter(alt => alt.confidence > 0.7)  // فقط النتائج عالية الثقة
+            .map(alt => alt.transcript)
+            .join(' ');
+        
+        const confidence = response.results[0].alternatives[0].confidence;
+        
+        console.log(`✅ Google Speech نجح: "${transcription}" (ثقة: ${(confidence * 100).toFixed(1)}%)`);
+        
+        return {
+            success: true,
+            text: transcription,
+            confidence: confidence,
+            language: response.results[0].languageCode
+        };
+        
+    } catch (error) {
+        console.error('❌ خطأ Google Speech:', error.message);
         return {
             success: false,
             error: error.message
@@ -762,7 +949,7 @@ async function generateSmartResponse(text) {
 }
 
 // ====================================
-// معالجة التسجيل (احتياطي)
+// معالجة التسجيل - Google Speech أولاً
 // ====================================
 app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     const { conversationId } = req.params;
@@ -778,11 +965,12 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     }
     
     let text = 'نعم';
+    let usedService = 'افتراضي';
     
-    // محاولة Whisper إذا متاح
-    if (openai && RecordingUrl) {
+    // محاولة Google Speech أولاً (الأفضل)
+    if (googleSpeech && RecordingUrl) {
         try {
-            console.log('🤖 محاولة استخدام Whisper...');
+            console.log('🎤 محاولة Google Speech...');
             
             // تأخير صغير
             await new Promise(r => setTimeout(r, 1000));
@@ -796,46 +984,112 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
                     username: config.twilioAccountSid,
                     password: config.twilioAuthToken
                 },
-                timeout: 5000
+                timeout: 8000
             });
             
             console.log('✅ تم تحميل الصوت، حجم:', audioResponse.data.length, 'bytes');
             
-            const formData = new FormData();
-            formData.append('file', Buffer.from(audioResponse.data), {
-                filename: 'audio.mp3',
-                contentType: 'audio/mpeg'
-            });
-            formData.append('model', 'whisper-1');
-            formData.append('language', 'ar');
-            formData.append('prompt', 'مرحبا، السلام عليكم، موعد، سعر، موقع، شكرا، مع السلامة، كيف حالك، أهلا');
+            // استخدام Google Speech
+            const googleResult = await googleSpeechToText(audioResponse.data, 'ar-SA');
             
-            console.log('🤖 إرسال إلى Whisper...');
-            
-            const whisperResponse = await axios.post(
-                'https://api.openai.com/v1/audio/transcriptions',
-                formData,
-                {
-                    headers: {
-                        'Authorization': `Bearer ${config.openaiApiKey}`,
-                        ...formData.getHeaders()
-                    },
-                    timeout: 5000
-                }
-            );
-            
-            text = whisperResponse.data.text || 'نعم';
-            console.log(`✅ Whisper نجح: "${text}"`);
+            if (googleResult.success && googleResult.confidence > 0.7) {
+                text = googleResult.text;
+                usedService = 'Google Speech';
+                console.log(`🎯 Google Speech نجح: "${text}" (ثقة: ${(googleResult.confidence * 100).toFixed(1)}%)`);
+            } else {
+                console.log('⚠️ Google Speech فشل أو ثقة منخفضة، محاولة Whisper...');
+                throw new Error('Google Speech فشل');
+            }
             
         } catch (error) {
-            console.log('⚠️ Whisper فشل:', error.message);
-            console.log('🔄 استخدام رد افتراضي:', text);
+            console.log('⚠️ Google Speech فشل:', error.message);
+            console.log('🔄 محاولة Whisper...');
+            
+            // محاولة Whisper كبديل
+            if (openai) {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', Buffer.from(audioResponse.data), {
+                        filename: 'audio.mp3',
+                        contentType: 'audio/mpeg'
+                    });
+                    formData.append('model', 'whisper-1');
+                    formData.append('language', 'ar');
+                    formData.append('prompt', 'مرحبا، السلام عليكم، موعد، سعر، موقع، شكرا، مع السلامة، كيف حالك، أهلا');
+                    
+                    console.log('🤖 إرسال إلى Whisper...');
+                    
+                    const whisperResponse = await axios.post(
+                        'https://api.openai.com/v1/audio/transcriptions',
+                        formData,
+                        {
+                            headers: {
+                                'Authorization': `Bearer ${config.openaiApiKey}`,
+                                ...formData.getHeaders()
+                            },
+                            timeout: 8000
+                        }
+                    );
+                    
+                    text = whisperResponse.data.text || 'نعم';
+                    usedService = 'Whisper';
+                    console.log(`✅ Whisper نجح: "${text}"`);
+                    
+                } catch (whisperError) {
+                    console.log('⚠️ Whisper فشل:', whisperError.message);
+                    console.log('🔄 استخدام رد افتراضي:', text);
+                }
+            }
         }
     } else {
-        console.log('⚠️ Whisper غير متاح أو رابط التسجيل مفقود');
+        console.log('⚠️ Google Speech غير متاح، محاولة Whisper...');
+        
+        // محاولة Whisper مباشرة
+        if (openai && RecordingUrl) {
+            try {
+                const audioUrl = `${RecordingUrl}.mp3`;
+                const audioResponse = await axios.get(audioUrl, {
+                    responseType: 'arraybuffer',
+                    auth: {
+                        username: config.twilioAccountSid,
+                        password: config.twilioAuthToken
+                    },
+                    timeout: 8000
+                });
+                
+                const formData = new FormData();
+                formData.append('file', Buffer.from(audioResponse.data), {
+                    filename: 'audio.mp3',
+                    contentType: 'audio/mpeg'
+                });
+                formData.append('model', 'whisper-1');
+                formData.append('language', 'ar');
+                formData.append('prompt', 'مرحبا، السلام عليكم، موعد، سعر، موقع، شكرا، مع السلامة، كيف حالك، أهلا');
+                
+                const whisperResponse = await axios.post(
+                    'https://api.openai.com/v1/audio/transcriptions',
+                    formData,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${config.openaiApiKey}`,
+                            ...formData.getHeaders()
+                        },
+                        timeout: 8000
+                    }
+                );
+                
+                text = whisperResponse.data.text || 'نعم';
+                usedService = 'Whisper';
+                console.log(`✅ Whisper نجح: "${text}"`);
+                
+            } catch (error) {
+                console.log('⚠️ Whisper فشل:', error.message);
+                console.log('🔄 استخدام رد افتراضي:', text);
+            }
+        }
     }
     
-    console.log('⚡ بدء معالجة النص:', text);
+    console.log(`⚡ بدء معالجة النص: "${text}" (${usedService})`);
     
     // معالجة سريعة
     await processUserInputFast(conversationId, text, res);
@@ -929,6 +1183,7 @@ app.get('/api/info', (req, res) => {
         phoneNumber: config.twilioPhoneNumber,
         elevenLabs: config.elevenLabsApiKey ? 'متصل' : 'غير متصل',
         openai: config.openaiApiKey ? 'متصل' : 'غير متصل',
+        googleSpeech: googleSpeech ? 'متصل' : 'غير متصل',
         conversations: conversations.size,
         cacheSize: responseCache.size
     });
@@ -948,10 +1203,12 @@ app.listen(PORT, () => {
     console.log(`   🤖 OpenAI: ${config.openaiApiKey ? '✅ متصل' : '❌ غير متصل'}`);
     console.log(`   🎵 ElevenLabs: ${config.elevenLabsApiKey ? '✅ متصل' : '❌ غير متصل'}`);
     console.log(`   🎭 Voice ID: ${config.elevenLabsVoiceId ? '✅ محدد' : '❌ غير محدد'}`);
+    console.log(`   🎤 Google Speech: ${googleSpeech ? '✅ متصل' : '❌ غير متصل'}`);
     console.log(`   🗄️ MongoDB: ${config.mongoUri ? '✅ متصل' : '❌ غير متصل'}`);
     console.log('=====================================');
     console.log('⚡ المميزات:');
     console.log('   🎭 صوت طبيعي: ElevenLabs + SSML');
+    console.log('   🎤 تعرف ذكي: Google Speech + Whisper');
     console.log('   🔄 المقاطعة: متاحة في أي وقت');
     console.log('   🌍 10 لغات: العربية أولاً مع التشكيل');
     console.log('   💾 كاش ذكي: لتحسين الأداء');

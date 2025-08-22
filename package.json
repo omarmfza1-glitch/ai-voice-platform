@@ -32,6 +32,7 @@
     "url": "https://github.com/yourusername/ai-voice-platform.git"
   },
   "dependencies": {
+    "@google-cloud/speech": "^6.0.0",
     "axios": "^1.6.2",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
