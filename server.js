@@ -111,63 +111,46 @@ if (config.geminiApiKey) {
 
 // إعداد Google Speech-to-Text
 let googleSpeech = null;
-if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CREDENTIALS_JSON) {
+if (process.env.GOOGLE_CREDENTIALS_JSON) {
     try {
         const speech = require('@google-cloud/speech');
         
-        // إعداد credentials
+        // فقط استخدم JSON credentials مباشرة
         let credentials = null;
-        if (process.env.GOOGLE_CREDENTIALS_JSON) {
-            try {
+        try {
+            // إذا كان JSON string، تحليله
+            if (typeof process.env.GOOGLE_CREDENTIALS_JSON === 'string') {
                 credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-                console.log('✅ تم تحليل GOOGLE_CREDENTIALS_JSON بنجاح');
-            } catch (parseError) {
-                console.error('❌ خطأ في تحليل GOOGLE_CREDENTIALS_JSON:', parseError.message);
-                credentials = null;
+            } else {
+                credentials = process.env.GOOGLE_CREDENTIALS_JSON;
             }
-        }
-        
-        // إعداد Google Speech Client
-        if (credentials && credentials.project_id) {
-            try {
+            
+            // التحقق من صحة البيانات
+            if (credentials && credentials.project_id && credentials.private_key) {
+                console.log('✅ تم تحليل GOOGLE_CREDENTIALS_JSON بنجاح');
+                
                 // استخدام JSON credentials مباشرة
                 googleSpeech = new speech.SpeechClient({
                     credentials: credentials,
                     projectId: credentials.project_id
                 });
-                console.log('✅ Google Speech: تم إعداد credentials من JSON');
-            } catch (initError) {
-                console.error('❌ خطأ في إعداد Google Speech مع JSON:', initError.message);
-                googleSpeech = null;
+                console.log('✅ Google Speech: تم إعداد credentials من JSON بنجاح');
+            } else {
+                throw new Error('بيانات JSON غير مكتملة');
             }
-        } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-            try {
-                // استخدام ملف credentials (إذا كان متوفراً)
-                googleSpeech = new speech.SpeechClient({
-                    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
-                });
-                console.log('✅ Google Speech: تم إعداد credentials من ملف');
-            } catch (initError) {
-                console.error('❌ خطأ في إعداد Google Speech مع ملف:', initError.message);
-                googleSpeech = null;
-            }
-        } else {
-            try {
-                // استخدام الإعدادات الافتراضية
-                googleSpeech = new speech.SpeechClient();
-                console.log('✅ Google Speech: تم إعداد credentials افتراضي');
-            } catch (initError) {
-                console.error('❌ خطأ في إعداد Google Speech افتراضي:', initError.message);
-                googleSpeech = null;
-            }
+            
+        } catch (parseError) {
+            console.error('❌ خطأ في تحليل GOOGLE_CREDENTIALS_JSON:', parseError.message);
+            console.log('⚠️ Google Speech غير متاح - JSON credentials غير صحيحة');
+            googleSpeech = null;
         }
         
-        console.log('✅ Google Speech-to-Text جاهز');
     } catch (error) {
-        console.error('❌ خطأ Google Speech:', error.message);
+        console.error('❌ خطأ في إعداد Google Speech:', error.message);
+        googleSpeech = null;
     }
 } else {
-    console.log('⚠️ GOOGLE_APPLICATION_CREDENTIALS غير موجود في Config Vars');
+    console.log('⚠️ GOOGLE_CREDENTIALS_JSON غير موجود في Config Vars - Google Speech غير متاح');
 }
 
 // التحقق من Google Speech
@@ -225,12 +208,14 @@ const conversations = new Map();
 const userProfiles = new Map();
 const responseCache = new Map(); // كاش للردود الشائعة
 
-// كاش محسن للأداء
+// كاش محسن للأداء مع تحسينات إضافية
 const enhancedCache = {
     responses: new Map(),
     audio: new Map(),
     tashkeel: new Map(),
     ssml: new Map(),
+    stt: new Map(),      // كاش للتعرف على الكلام
+    whisper: new Map(),  // كاش للـ Whisper
     
     // إضافة مع TTL
     set: function(key, value, ttl = performanceConfig.cacheTTL) {
@@ -254,14 +239,47 @@ const enhancedCache = {
         return item.value;
     },
     
+    // إضافة للكاش المحدد
+    setIn: function(cacheType, key, value, ttl = performanceConfig.cacheTTL) {
+        if (this[cacheType]) {
+            this[cacheType].set(key, {
+                value: value,
+                timestamp: Date.now(),
+                ttl: ttl
+            });
+        }
+    },
+    
+    // الحصول من الكاش المحدد
+    getFrom: function(cacheType, key) {
+        if (this[cacheType]) {
+            const item = this[cacheType].get(key);
+            if (!item) return null;
+            
+            if (Date.now() - item.timestamp > item.ttl) {
+                this[cacheType].delete(key);
+                return null;
+            }
+            
+            return item.value;
+        }
+        return null;
+    },
+    
     // تنظيف الكاش
     cleanup: function() {
         const now = Date.now();
-        for (const [key, item] of this.responses.entries()) {
-            if (now - item.timestamp > item.ttl) {
-                this.responses.delete(key);
+        const caches = ['responses', 'audio', 'tashkeel', 'ssml', 'stt', 'whisper'];
+        
+        caches.forEach(cacheType => {
+            if (this[cacheType]) {
+                for (const [key, item] of this[cacheType].entries()) {
+                    if (now - item.timestamp > item.ttl) {
+                        this[cacheType].delete(key);
+                    }
+                }
             }
-        }
+        });
     }
 };
 
@@ -1264,7 +1282,7 @@ async function googleSpeechToText(audioBuffer, language = 'ar-SA') {
             content: audioBuffer.toString('base64')
         };
         
-        // إعدادات محسنة للعربية
+        // إعدادات محسنة للعربية مع تحسينات السرعة
         const config = {
             encoding: 'WAV',           // ترميز عالي الجودة
             sampleRateHertz: 48000,    // معدل عينات احترافي
@@ -1276,7 +1294,15 @@ async function googleSpeechToText(audioBuffer, language = 'ar-SA') {
             enableWordConfidence: true,         // ثقة الكلمات
             alternativeLanguageCodes: ['ar-SA', 'en-US', 'ar-EG'],  // لغات بديلة
             audioChannelCount: 2,      // صوت ستيريو
-            bitRate: 320000            // معدل البت (إذا كان متاحاً)
+            bitRate: 320000,           // معدل البت (إذا كان متاحاً)
+            // تحسينات السرعة
+            enableSeparateRecognitionPerChannel: false,  // لا نحتاج فصل القنوات
+            maxAlternatives: 1,        // خيار واحد فقط للسرعة
+            profanityFilter: false,    // إيقاف فلتر الكلمات المسيئة للسرعة
+            speechContexts: [{         // سياق الكلام للعربية
+                phrases: ['مرحبا', 'السلام عليكم', 'موعد', 'سعر', 'موقع', 'شكرا', 'مع السلامة', 'كيف حالك', 'أهلا'],
+                boost: 20.0
+            }]
         };
         
         const request = {
@@ -1286,11 +1312,11 @@ async function googleSpeechToText(audioBuffer, language = 'ar-SA') {
         
         console.log('🚀 إرسال إلى Google Speech...');
         
-        // طلب التعرف مع timeout
+        // طلب التعرف مع timeout محسن
         const [response] = await Promise.race([
             googleSpeech.recognize(request),
             new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Google Speech timeout')), 10000)
+                setTimeout(() => reject(new Error('Google Speech timeout')), 8000)  // تقليل timeout للسرعة
             )
         ]);
         
@@ -1811,27 +1837,69 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
         console.log(`🔧 تمت معالجة الصوت، الحجم الجديد: ${processedAudio.length} bytes (وقت: ${audioProcessingTime}ms)`);
         
         // حفظ في الكاش للسرعة
-        enhancedCache.set(`audio_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+        enhancedCache.setIn('audio', cacheKey, {
             audio: processedAudio,
             timestamp: Date.now()
         }, 60000); // كاش لمدة دقيقة
             
             // استخدام Google Speech مع تحسينات الأداء
             const sttStartTime = Date.now();
-            const googleResult = await googleSpeechToText(processedAudio, 'ar-SA');
+            
+            // فحص الكاش أولاً للسرعة
+            const cacheKey = Buffer.from(processedAudio).toString('base64').substring(0, 100);
+            const cachedResult = enhancedCache.getFrom('stt', cacheKey);
+            
+            let googleResult;
+            if (cachedResult) {
+                console.log('⚡ استخدام نتيجة من الكاش للسرعة');
+                googleResult = cachedResult;
+            } else {
+                googleResult = await googleSpeechToText(processedAudio, 'ar-SA');
+                // حفظ في الكاش
+                enhancedCache.setIn('stt', cacheKey, googleResult, 60000);
+            }
+            
             const sttProcessingTime = Date.now() - sttStartTime;
             
-            if (googleResult.success && googleResult.confidence > 0.6) { // خفض عتبة الثقة للسرعة
+            if (googleResult.success && googleResult.confidence > 0.5) { // خفض عتبة الثقة أكثر للسرعة
                 text = googleResult.text;
                 usedService = 'Google Speech';
-                console.log(`🎯 Google Speech نجح: "${text}" (ثقة: ${(googleResult.confidence * 100).toFixed(1)}%, وقت: ${processingTime}ms)`);
+                console.log(`🎯 Google Speech نجح: "${text}" (ثقة: ${(googleResult.confidence * 100).toFixed(1)}%, وقت: ${sttProcessingTime}ms)`);
                 
                 // حفظ في الكاش للسرعة
-                enhancedCache.set(`stt_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+                enhancedCache.setIn('stt', cacheKey, {
                     text: text,
                     confidence: googleResult.confidence,
                     service: 'Google Speech'
                 }, 60000); // كاش لمدة دقيقة
+                
+                // تحسين إضافي: إذا كانت الثقة منخفضة، حاول مرة أخرى مع إعدادات مختلفة
+                if (googleResult.confidence < 0.7) {
+                    console.log('🔄 محاولة ثانية مع إعدادات محسنة...');
+                    try {
+                        const retryConfig = { ...config };
+                        retryConfig.model = 'latest_long';  // نموذج مختلف
+                        retryConfig.useEnhanced = false;    // إيقاف التحسينات للسرعة
+                        
+                        const retryRequest = { audio, config: retryConfig };
+                        const [retryResponse] = await Promise.race([
+                            googleSpeech.recognize(retryRequest),
+                            new Promise((_, reject) => 
+                                setTimeout(() => reject(new Error('Retry timeout')), 5000)
+                            )
+                        ]);
+                        
+                        if (retryResponse.results && retryResponse.results.length > 0) {
+                            const retryConfidence = retryResponse.results[0].alternatives[0].confidence;
+                            if (retryConfidence > googleResult.confidence) {
+                                text = retryResponse.results[0].alternatives[0].transcript;
+                                console.log(`🎯 المحاولة الثانية نجحت: "${text}" (ثقة: ${(retryConfidence * 100).toFixed(1)}%)`);
+                            }
+                        }
+                    } catch (retryError) {
+                        console.log('⚠️ المحاولة الثانية فشلت:', retryError.message);
+                    }
+                }
             } else {
                 console.log('⚠️ Google Speech فشل أو ثقة منخفضة، محاولة Whisper...');
                 throw new Error('Google Speech فشل');
@@ -1862,15 +1930,15 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
         console.log(`🔧 تمت معالجة الصوت للـ Whisper (وقت: ${whisperAudioProcessingTime}ms)`);
         
         // حفظ في الكاش للسرعة
-        enhancedCache.set(`whisper_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+        enhancedCache.setIn('audio', cacheKey, {
             audio: processedAudio,
             timestamp: Date.now()
         }, 30000); // كاش لمدة 30 ثانية
                     
                     const formData = new FormData();
                     formData.append('file', Buffer.from(processedAudio), {
-                        filename: 'audio.mp3',
-                        contentType: 'audio/mpeg'
+                        filename: 'audio.wav',
+                        contentType: 'audio/wav'
                     });
                     formData.append('model', 'whisper-1');
                     formData.append('language', 'ar');
@@ -1894,9 +1962,52 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
                     usedService = 'Whisper';
                     console.log(`✅ Whisper نجح: "${text}"`);
                     
+                    // حفظ في الكاش للسرعة
+                    enhancedCache.setIn('whisper', cacheKey, {
+                        text: text,
+                        service: 'Whisper',
+                        timestamp: Date.now()
+                    }, 30000); // كاش لمدة 30 ثانية
+                    
                 } catch (whisperError) {
                     console.log('⚠️ Whisper فشل:', whisperError.message);
-                    console.log('🔄 استخدام رد افتراضي:', text);
+                    
+                    // محاولة إصلاح مشكلة Whisper
+                    if (whisperError.response && whisperError.response.status === 400) {
+                        console.log('🔧 محاولة إصلاح مشكلة Whisper 400...');
+                        try {
+                            // تحويل الصوت إلى ترميز مختلف
+                            const fixedFormData = new FormData();
+                            fixedFormData.append('file', Buffer.from(processedAudio), {
+                                filename: 'audio.wav',
+                                contentType: 'audio/wav'
+                            });
+                            fixedFormData.append('model', 'whisper-1');
+                            fixedFormData.append('language', 'ar');
+                            
+                            const fixedResponse = await axios.post(
+                                'https://api.openai.com/v1/audio/transcriptions',
+                                fixedFormData,
+                                {
+                                    headers: {
+                                        'Authorization': `Bearer ${config.openaiApiKey}`,
+                                        ...fixedFormData.getHeaders()
+                                    },
+                                    timeout: 10000
+                                }
+                            );
+                            
+                            text = fixedResponse.data.text || 'نعم';
+                            usedService = 'Whisper (Fixed)';
+                            console.log(`✅ Whisper تم إصلاحه: "${text}"`);
+                            
+                        } catch (fixError) {
+                            console.log('❌ فشل إصلاح Whisper:', fixError.message);
+                            console.log('🔄 استخدام رد افتراضي:', text);
+                        }
+                    } else {
+                        console.log('🔄 استخدام رد افتراضي:', text);
+                    }
                 }
             }
         }
@@ -1923,15 +2034,15 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
                 console.log(`🔧 تمت معالجة الصوت للـ Whisper المباشر (وقت: ${directWhisperProcessingTime}ms)`);
                 
                 // حفظ في الكاش للسرعة
-                enhancedCache.set(`direct_whisper_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+                enhancedCache.setIn('audio', cacheKey, {
                     audio: processedAudio,
                     timestamp: Date.now()
                 }, 30000); // كاش لمدة 30 ثانية
                 
                 const formData = new FormData();
                 formData.append('file', Buffer.from(processedAudio), {
-                    filename: 'audio.mp3',
-                    contentType: 'audio/mpeg'
+                    filename: 'audio.wav',
+                    contentType: 'audio/wav'
                 });
                 formData.append('model', 'whisper-1');
                 formData.append('language', 'ar');
@@ -1974,12 +2085,16 @@ async function postProcessAudio(audioBuffer) {
         console.log('🔧 بدء معالجة ما بعد التسجيل...');
         const startTime = Date.now();
         
-        // إعدادات المعالجة
+        // إعدادات المعالجة محسنة للتعرف السريع
         const postProcessing = {
             noiseReduction: true,      // تقليل الضوضاء
             echoCancellation: true,    // إلغاء الصدى
             compression: false,        // بدون ضغط
-            normalization: true        // تطبيع الصوت
+            normalization: true,       // تطبيع الصوت
+            // تحسينات إضافية للتعرف السريع
+            clarityEnhancement: true,  // تحسين الوضوح
+            volumeBoost: true,         // رفع مستوى الصوت
+            voiceOptimization: true    // تحسين الصوت
         };
         
         let processedBuffer = audioBuffer;
@@ -2012,6 +2127,33 @@ async function postProcessAudio(audioBuffer) {
             processedBuffer = applyAudioNormalization(processedBuffer);
             const normTime = Date.now() - normStartTime;
             console.log(`📊 تطبيع الصوت: ${normTime}ms`);
+        }
+        
+        // تحسين الوضوح للتعرف السريع
+        if (postProcessing.clarityEnhancement) {
+            console.log('🔍 تطبيق تحسين الوضوح...');
+            const clarityStartTime = Date.now();
+            processedBuffer = applyClarityEnhancement(processedBuffer);
+            const clarityTime = Date.now() - clarityStartTime;
+            console.log(`🔍 تحسين الوضوح: ${clarityTime}ms`);
+        }
+        
+        // رفع مستوى الصوت
+        if (postProcessing.volumeBoost) {
+            console.log('🔊 تطبيق رفع مستوى الصوت...');
+            const volumeStartTime = Date.now();
+            processedBuffer = applyVolumeBoost(processedBuffer);
+            const volumeTime = Date.now() - volumeStartTime;
+            console.log(`🔊 رفع مستوى الصوت: ${volumeTime}ms`);
+        }
+        
+        // تحسين الصوت
+        if (postProcessing.voiceOptimization) {
+            console.log('🎵 تطبيق تحسين الصوت...');
+            const voiceStartTime = Date.now();
+            processedBuffer = applyVoiceOptimization(processedBuffer);
+            const voiceTime = Date.now() - voiceStartTime;
+            console.log(`🎵 تحسين الصوت: ${voiceTime}ms`);
         }
         
         const totalTime = Date.now() - startTime;
