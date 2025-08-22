@@ -538,15 +538,17 @@ async function googleSpeechToText(audioBuffer, language = 'ar-SA') {
         
         // إعدادات محسنة للعربية
         const config = {
-            encoding: 'MP3',
-            sampleRateHertz: 8000,
+            encoding: 'WAV',           // ترميز عالي الجودة
+            sampleRateHertz: 48000,    // معدل عينات احترافي
             languageCode: language,
             model: 'phone_call',        // نموذج محسن للمكالمات
             useEnhanced: true,          // تحسين الجودة
             enableAutomaticPunctuation: true,  // علامات الترقيم
             enableWordTimeOffsets: false,       // لا نحتاج أوقات الكلمات
             enableWordConfidence: true,         // ثقة الكلمات
-            alternativeLanguageCodes: ['ar-SA', 'en-US', 'ar-EG']  // لغات بديلة
+            alternativeLanguageCodes: ['ar-SA', 'en-US', 'ar-EG'],  // لغات بديلة
+            audioChannelCount: 2,      // صوت ستيريو
+            bitRate: 320000            // معدل البت (إذا كان متاحاً)
         };
         
         const request = {
@@ -989,8 +991,12 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
             
             console.log('✅ تم تحميل الصوت، حجم:', audioResponse.data.length, 'bytes');
             
+            // تطبيق معالجة ما بعد التسجيل
+            const processedAudio = await postProcessAudio(audioResponse.data);
+            console.log('🔧 تمت معالجة الصوت، الحجم الجديد:', processedAudio.length, 'bytes');
+            
             // استخدام Google Speech
-            const googleResult = await googleSpeechToText(audioResponse.data, 'ar-SA');
+            const googleResult = await googleSpeechToText(processedAudio, 'ar-SA');
             
             if (googleResult.success && googleResult.confidence > 0.7) {
                 text = googleResult.text;
@@ -1008,8 +1014,12 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
             // محاولة Whisper كبديل
             if (openai) {
                 try {
+                    // تطبيق معالجة ما بعد التسجيل
+                    const processedAudio = await postProcessAudio(audioResponse.data);
+                    console.log('🔧 تمت معالجة الصوت للـ Whisper');
+                    
                     const formData = new FormData();
-                    formData.append('file', Buffer.from(audioResponse.data), {
+                    formData.append('file', Buffer.from(processedAudio), {
                         filename: 'audio.mp3',
                         contentType: 'audio/mpeg'
                     });
@@ -1057,8 +1067,12 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
                     timeout: 8000
                 });
                 
+                // تطبيق معالجة ما بعد التسجيل
+                const processedAudio = await postProcessAudio(audioResponse.data);
+                console.log('🔧 تمت معالجة الصوت للـ Whisper المباشر');
+                
                 const formData = new FormData();
-                formData.append('file', Buffer.from(audioResponse.data), {
+                formData.append('file', Buffer.from(processedAudio), {
                     filename: 'audio.mp3',
                     contentType: 'audio/mpeg'
                 });
@@ -1094,6 +1108,111 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     // معالجة سريعة
     await processUserInputFast(conversationId, text, res);
 });
+
+// ====================================
+// معالجة ما بعد التسجيل - تحسين الجودة
+// ====================================
+async function postProcessAudio(audioBuffer) {
+    try {
+        console.log('🔧 بدء معالجة ما بعد التسجيل...');
+        
+        // إعدادات المعالجة
+        const postProcessing = {
+            noiseReduction: true,      // تقليل الضوضاء
+            echoCancellation: true,    // إلغاء الصدى
+            compression: false,        // بدون ضغط
+            normalization: true        // تطبيع الصوت
+        };
+        
+        let processedBuffer = audioBuffer;
+        
+        // تقليل الضوضاء
+        if (postProcessing.noiseReduction) {
+            console.log('🔇 تطبيق تقليل الضوضاء...');
+            // هنا يمكن إضافة خوارزمية تقليل الضوضاء
+            // للتبسيط، سنقوم بتصفية بسيط
+            processedBuffer = applyNoiseReduction(processedBuffer);
+        }
+        
+        // إلغاء الصدى
+        if (postProcessing.echoCancellation) {
+            console.log('🔄 تطبيق إلغاء الصدى...');
+            // هنا يمكن إضافة خوارزمية إلغاء الصدى
+            processedBuffer = applyEchoCancellation(processedBuffer);
+        }
+        
+        // تطبيع الصوت
+        if (postProcessing.normalization) {
+            console.log('📊 تطبيق تطبيع الصوت...');
+            processedBuffer = applyAudioNormalization(processedBuffer);
+        }
+        
+        console.log('✅ تم الانتهاء من معالجة ما بعد التسجيل');
+        return processedBuffer;
+        
+    } catch (error) {
+        console.error('❌ خطأ في معالجة ما بعد التسجيل:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
+    }
+}
+
+// ====================================
+// دالة تقليل الضوضاء (مبسطة)
+// ====================================
+function applyNoiseReduction(audioBuffer) {
+    // خوارزمية بسيطة لتقليل الضوضاء
+    // في التطبيق الحقيقي، استخدم مكتبة متخصصة
+    const samples = new Float32Array(audioBuffer);
+    const threshold = 0.1; // عتبة الضوضاء
+    
+    for (let i = 0; i < samples.length; i++) {
+        if (Math.abs(samples[i]) < threshold) {
+            samples[i] = 0; // إزالة الضوضاء الصغيرة
+        }
+    }
+    
+    return Buffer.from(samples.buffer);
+}
+
+// ====================================
+// دالة إلغاء الصدى (مبسطة)
+// ====================================
+function applyEchoCancellation(audioBuffer) {
+    // خوارزمية بسيطة لإلغاء الصدى
+    // في التطبيق الحقيقي، استخدم مكتبة متخصصة
+    const samples = new Float32Array(audioBuffer);
+    const echoDelay = 1000; // تأخير الصدى بالعينات
+    
+    for (let i = echoDelay; i < samples.length; i++) {
+        // إزالة الصدى البسيط
+        samples[i] = samples[i] - (samples[i - echoDelay] * 0.3);
+    }
+    
+    return Buffer.from(samples.buffer);
+}
+
+// ====================================
+// دالة تطبيع الصوت
+// ====================================
+function applyAudioNormalization(audioBuffer) {
+    const samples = new Float32Array(audioBuffer);
+    
+    // إيجاد القيمة القصوى
+    let maxValue = 0;
+    for (let i = 0; i < samples.length; i++) {
+        maxValue = Math.max(maxValue, Math.abs(samples[i]));
+    }
+    
+    // تطبيع الصوت
+    if (maxValue > 0) {
+        const scaleFactor = 0.95 / maxValue; // 95% من الحد الأقصى
+        for (let i = 0; i < samples.length; i++) {
+            samples[i] = samples[i] * scaleFactor;
+        }
+    }
+    
+    return Buffer.from(samples.buffer);
+}
 
 // ====================================
 // معالجة تحديثات حالة Twilio
