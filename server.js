@@ -312,13 +312,13 @@ app.get('/', (req, res) => {
 // ====================================
 async function addTashkeel(text) {
     try {
-        // استخدام GPT-4o للتشكيل الدقيق
+        // استخدام GPT-5 للتشكيل الدقيق
         if (openai) {
             console.log('🤖 استخدام GPT للتشكيل العربي...');
             
             const completion = await Promise.race([
                 openai.chat.completions.create({
-                                                model: "gpt-4o",
+                                                model: "gpt-5",
                     messages: [
                         {
                             role: "system",
@@ -657,13 +657,13 @@ async function generateSSML(text, isArabic, emotion = 'friendly') {
             text = await addTashkeel(text);
         }
         
-        // استخدام GPT-4o لصياغة SSML محسن
+        // استخدام GPT-5 لصياغة SSML محسن
         if (openai) {
             console.log('🤖 استخدام GPT لصياغة SSML...');
             
             const completion = await Promise.race([
                 openai.chat.completions.create({
-                                                model: "gpt-4o",
+                                                model: "gpt-5",
                     messages: [
                         {
                             role: "system",
@@ -1388,7 +1388,7 @@ async function generateSmartResponse(text) {
             console.log(`🤖 استخدام GPT للرد على: "${text}"`);
                              const completion = await Promise.race([
                      openai.chat.completions.create({
-                         model: "gpt-4o",
+                         model: "gpt-5",
                          messages: [
                                                  { 
                              role: "system", 
@@ -2022,8 +2022,8 @@ app.get('/api/info', (req, res) => {
             },
             output: {
                 elevenLabs: 'MP3 22.05kHz 64kbps',
-                ssml: 'GPT-4o لصياغة SSML محسن',
-                tashkeel: 'GPT-4o للتشكيل العربي الدقيق',
+                ssml: 'GPT-5 لصياغة SSML محسن',
+                tashkeel: 'GPT-5 للتشكيل العربي الدقيق',
                 processing: 'معطلة مؤقتاً لاستقرار النظام'
             },
             performance: {
@@ -2063,8 +2063,8 @@ app.listen(PORT, () => {
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
     console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps (معالجة معطلة مؤقتاً)');
     console.log('   🔧 المعالجة: معطلة مؤقتاً لاستقرار النظام');
-    console.log('   🤖 التشكيل: GPT-4o للتشكيل العربي الدقيق');
-console.log('   🎭 SSML: GPT-4o لصياغة SSML محسن');
+    console.log('   🤖 التشكيل: GPT-5 للتشكيل العربي الدقيق');
+console.log('   🎭 SSML: GPT-5 لصياغة SSML محسن');
     console.log('=====================================');
     
     // تحذير إذا كانت المتغيرات مفقودة
