@@ -472,7 +472,17 @@ app.post('/api/voice/process-speech/:conversationId', async (req, res) => {
     const { conversationId } = req.params;
     const { SpeechResult } = req.body;
     
-    console.log(`🎤 سماع: "${SpeechResult}"`);
+    console.log(`🎤 كلام مباشر: "${SpeechResult}"`);
+    console.log(`🆔 معرف المحادثة: ${conversationId}`);
+    
+    if (!SpeechResult || SpeechResult.trim() === '') {
+        console.log('⚠️ لا يوجد كلام، إعادة توجيه للاستماع');
+        const twiml = new twilio.twiml.VoiceResponse();
+        twiml.redirect(`/api/voice/listen/${conversationId}`);
+        res.type('text/xml');
+        res.send(twiml.toString());
+        return;
+    }
     
     // معالجة سريعة
     setImmediate(async () => {
@@ -509,9 +519,14 @@ app.all('/api/voice/listen/:conversationId', async (req, res) => {
 // ====================================
 async function processUserInputFast(conversationId, text, res) {
     const conversation = conversations.get(conversationId);
-    if (!conversation) return;
+    if (!conversation) {
+        console.log('❌ المحادثة غير موجودة في processUserInputFast:', conversationId);
+        return;
+    }
     
     console.log(`⚡ معالجة سريعة: "${text}"`);
+    console.log(`🆔 معرف المحادثة: ${conversationId}`);
+    console.log(`📱 رقم الهاتف: ${conversation.phoneNumber}`);
     
     // حفظ الرسالة
     conversation.messages.push({
@@ -523,8 +538,8 @@ async function processUserInputFast(conversationId, text, res) {
     // كشف الوداع بالعربية والإنجليزية
     const farewellWords = [
         'مع السلامة', 'مع السلامه', 'وداعا', 'وداع', 'باي', 'خلاص', 
-        'انتهى', 'شكرا لك', 'شكرا', 'كفى', 'توقف',
-        'goodbye', 'bye', 'thank you', 'thanks', 'stop', 'end'
+        'انتهى', 'شكرا لك', 'شكرا', 'كفى', 'توقف', 'خلاص',
+        'goodbye', 'bye', 'thank you', 'thanks', 'stop', 'end', 'finish'
     ];
     
     const inputLower = text.toLowerCase();
@@ -533,6 +548,8 @@ async function processUserInputFast(conversationId, text, res) {
     );
     
     if (wantsToEnd) {
+        console.log('👋 العميل يريد إنهاء المكالمة');
+        
         // وداع سريع باستخدام ElevenLabs
         const farewellText = 'شكراً لك. أتمنى لك يوماً سعيداً. مع السلامة!';
         
@@ -542,9 +559,10 @@ async function processUserInputFast(conversationId, text, res) {
         const audioResult = await textToSpeechElevenLabs(farewellText, 'ar');
         
         if (audioResult.success) {
+            console.log('🎵 تشغيل وداع ElevenLabs');
             twiml.play(`/api/audio/${audioResult.fileName}`);
         } else {
-            // استخدام Twilio كبديل
+            console.log('⚠️ فشل ElevenLabs، استخدام Twilio');
             twiml.say({
                 voice: 'Polly.Zeina',
                 language: 'arb'
@@ -563,16 +581,26 @@ async function processUserInputFast(conversationId, text, res) {
     let responseText = responseCache.get(cacheKey);
     
     if (!responseText) {
+        console.log('🔄 توليد رد جديد...');
+        
         // توليد رد جديد
         responseText = await generateSmartResponse(text);
+        
         // حفظ في الكاش
         responseCache.set(cacheKey, responseText);
+        console.log('💾 تم حفظ الرد في الكاش');
+        
         // حذف الكاش القديم إذا كبر
         if (responseCache.size > 100) {
             const firstKey = responseCache.keys().next().value;
             responseCache.delete(firstKey);
+            console.log('🗑️ تم حذف رد قديم من الكاش');
         }
+    } else {
+        console.log('⚡ استخدام رد من الكاش');
     }
+    
+    console.log(`📝 الرد النهائي: "${responseText}"`);
     
     // حفظ الرد
     conversation.messages.push({
@@ -581,44 +609,48 @@ async function processUserInputFast(conversationId, text, res) {
         timestamp: Date.now()
     });
     
-            // إنشاء رد باستخدام ElevenLabs
-        const twiml = new twilio.twiml.VoiceResponse();
+    // إنشاء رد باستخدام ElevenLabs
+    const twiml = new twilio.twiml.VoiceResponse();
+    
+    // إنشاء الصوت باستخدام ElevenLabs
+    const audioResult = await textToSpeechElevenLabs(responseText, conversation.language || 'ar');
+    
+    if (audioResult.success) {
+        console.log('🎵 إنشاء رد ElevenLabs ناجح');
         
-        // إنشاء الصوت باستخدام ElevenLabs
-        const audioResult = await textToSpeechElevenLabs(responseText, conversation.language || 'ar');
+        // الرد مع إمكانية المقاطعة
+        const gather = twiml.gather({
+            input: 'speech dtmf', // صوت أو أزرار
+            language: 'ar-SA',
+            speechTimeout: 'auto',
+            timeout: 3, // زيادة الوقت قليلاً
+            action: `/api/voice/process-speech/${conversationId}`,
+            method: 'POST',
+            bargein: true, // السماح بالمقاطعة
+            bargeInWords: 'stop,توقف,مرحبا,أهلا,السلام عليكم'
+        });
         
-        if (audioResult.success) {
-            // الرد مع إمكانية المقاطعة
-            const gather = twiml.gather({
-                input: 'speech dtmf', // صوت أو أزرار
-                language: 'ar-SA',
-                speechTimeout: 'auto',
-                timeout: 2,
-                action: `/api/voice/process-speech/${conversationId}`,
-                method: 'POST',
-                bargein: true, // السماح بالمقاطعة
-                bargeInWords: 'stop,توقف,مرحبا' // كلمات المقاطعة
-            });
-            
-            gather.play(`/api/audio/${audioResult.fileName}`);
-        } else {
-            // استخدام Twilio كبديل في حالة فشل ElevenLabs
-            const gather = twiml.gather({
-                input: 'speech dtmf',
-                language: 'ar-SA',
-                speechTimeout: 'auto',
-                timeout: 2,
-                action: `/api/voice/process-speech/${conversationId}`,
-                method: 'POST',
-                bargein: true,
-                bargeInWords: 'stop,توقف,مرحبا'
-            });
-            
-            gather.say({
-                voice: 'Polly.Zeina',
-                language: 'arb'
-            }, responseText);
-        }
+        gather.play(`/api/audio/${audioResult.fileName}`);
+    } else {
+        console.log('⚠️ فشل ElevenLabs، استخدام Twilio');
+        
+        // استخدام Twilio كبديل في حالة فشل ElevenLabs
+        const gather = twiml.gather({
+            input: 'speech dtmf',
+            language: 'ar-SA',
+            speechTimeout: 'auto',
+            timeout: 3,
+            action: `/api/voice/process-speech/${conversationId}`,
+            method: 'POST',
+            bargein: true,
+            bargeInWords: 'stop,توقف,مرحبا,أهلا,السلام عليكم'
+        });
+        
+        gather.say({
+            voice: 'Polly.Zeina',
+            language: 'arb'
+        }, responseText);
+    }
     
     // إذا لم يتحدث
     twiml.redirect(`/api/voice/listen/${conversationId}`);
@@ -633,20 +665,48 @@ async function processUserInputFast(conversationId, text, res) {
 async function generateSmartResponse(text) {
     const input = text.toLowerCase();
     
+    // ردود عربية منطقية ومحسنة
+    const arabicResponses = {
+        'السلام عليكم': 'وعليكم السلام ورحمة الله! كيف يمكنني مساعدتك اليوم؟',
+        'السلام': 'وعليكم السلام ورحمة الله! تفضل كيف أساعدك؟',
+        'الو': 'أهلاً وسهلاً! كيف أقدر أخدمك؟',
+        'مرحبا': 'أهلاً وسهلاً بك! كيف يمكنني خدمتك اليوم؟',
+        'كيف حالك': 'الحمد لله، بخير. كيف أقدر أساعدك؟',
+        'كيف الحال': 'الحمد لله، بخير. كيف أقدر أخدمك؟',
+        'صباح الخير': 'صباح النور والسرور! كيف أقدر أساعدك؟',
+        'مساء الخير': 'مساء الخير! كيف أقدر أخدمك؟',
+        'أهلا': 'أهلاً وسهلاً بك! كيف يمكنني مساعدتك؟',
+        'أهلاً': 'أهلاً وسهلاً! كيف أقدر أخدمك؟',
+        'شكرا': 'العفو! هل هناك شيء آخر يمكنني مساعدتك به؟',
+        'شكرا لك': 'العفو! هل هناك شيء آخر يمكنني مساعدتك به؟',
+        'ممتاز': 'أشكرك! هل هناك شيء آخر تحتاجه؟',
+        'جيد': 'أحسنت! هل هناك شيء آخر يمكنني مساعدتك به؟'
+    };
+    
     // ردود سريعة للأسئلة الشائعة
     const quickResponses = {
-        'مرحبا': 'أهلاً وسهلاً بك! كيف يمكنني خدمتك اليوم؟',
-        'السلام': 'وعليكم السلام ورحمة الله! تفضل كيف أساعدك؟',
         'موعد': 'يمكنك الحجز يوم الأحد العاشرة صباحاً، أو الإثنين الثانية ظهراً. أيهما تفضل؟',
         'سعر': 'سعر الاستشارة مائة ريال. هل تريد حجز موعد؟',
         'موقع': 'نحن في شارع الملك فهد، مبنى رقم مائة وثلاثة وعشرين.',
-        'صباح': 'صباح النور والسرور! كيف أقدر أساعدك؟',
-        'مساء': 'مساء الخير! تفضل كيف أخدمك؟'
+        'أين': 'نحن في شارع الملك فهد، مبنى رقم مائة وثلاثة وعشرين.',
+        'متى': 'يمكنك الحجز يوم الأحد العاشرة صباحاً، أو الإثنين الثانية ظهراً.',
+        'كيف': 'كيف أقدر أساعدك؟ هل تريد معلومات عن المواعيد أم الأسعار أم الموقع؟',
+        'معلومات': 'أنا هنا لمساعدتك! هل تريد معلومات عن المواعيد، الأسعار، أم الموقع؟',
+        'مساعدة': 'أنا هنا لمساعدتك! هل تريد معلومات عن المواعيد، الأسعار، أم الموقع؟'
     };
     
-    // بحث سريع عن رد جاهز
+    // البحث في الردود العربية أولاً
+    for (const [key, response] of Object.entries(arabicResponses)) {
+        if (input.includes(key)) {
+            console.log(`🎯 رد عربي سريع: "${key}" → "${response}"`);
+            return response;
+        }
+    }
+    
+    // البحث في الردود السريعة
     for (const [key, response] of Object.entries(quickResponses)) {
         if (input.includes(key)) {
+            console.log(`🎯 رد سريع: "${key}" → "${response}"`);
             return response;
         }
     }
@@ -654,6 +714,7 @@ async function generateSmartResponse(text) {
     // استخدام GPT إذا متاح
     if (openai) {
         try {
+            console.log(`🤖 استخدام GPT للرد على: "${text}"`);
             const completion = await Promise.race([
                 openai.chat.completions.create({
                     model: "gpt-4o-mini",
@@ -664,27 +725,40 @@ async function generateSmartResponse(text) {
                             رد بجملة واحدة أو اثنتين قصيرتين.
                             استخدم كلمات بسيطة وواضحة.
                             كن طبيعياً وودوداً.
-                            أضف التشكيل للكلمات المهمة.`
+                            أضف التشكيل للكلمات المهمة.
+                            لا تذكر أبداً "اشترك في القناة" أو أي رسائل غير مناسبة.
+                            ركز على مساعدة العميل في المواعيد، الأسعار، الموقع، والخدمات.`
                         },
                         { role: "user", content: text }
                     ],
-                    max_completion_tokens: 60,
+                    max_completion_tokens: 80,
                     temperature: 0.7
                 }),
                 new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Timeout')), 2000)
+                    setTimeout(() => reject(new Error('Timeout')), 3000)
                 )
             ]);
             
-            return completion.choices[0].message.content;
+            const gptResponse = completion.choices[0].message.content;
+            console.log(`✅ GPT رد: "${gptResponse}"`);
+            return gptResponse;
             
         } catch (error) {
-            console.log('⚠️ استخدام رد افتراضي');
+            console.log('⚠️ GPT فشل، استخدام رد افتراضي محسن');
         }
     }
     
-    // رد افتراضي
-    return 'نعم، أفهمك. كيف يمكنني المساعدة؟';
+    // رد افتراضي محسن
+    const defaultResponses = [
+        'أفهمك، كيف يمكنني مساعدتك؟',
+        'نعم، كيف أقدر أخدمك؟',
+        'أنا هنا لمساعدتك، ما الذي تحتاجه؟',
+        'كيف يمكنني مساعدتك اليوم؟'
+    ];
+    
+    const randomResponse = defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+    console.log(`🎲 رد افتراضي: "${randomResponse}"`);
+    return randomResponse;
 }
 
 // ====================================
@@ -694,10 +768,12 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     const { conversationId } = req.params;
     const { RecordingUrl } = req.body;
     
-    console.log('🎙️ تسجيل:', RecordingUrl);
+    console.log('🎙️ تسجيل جديد:', RecordingUrl);
+    console.log('🆔 معرف المحادثة:', conversationId);
     
     const conversation = conversations.get(conversationId);
     if (!conversation) {
+        console.log('❌ المحادثة غير موجودة:', conversationId);
         return res.status(404).send('Not found');
     }
     
@@ -706,18 +782,24 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
     // محاولة Whisper إذا متاح
     if (openai && RecordingUrl) {
         try {
+            console.log('🤖 محاولة استخدام Whisper...');
+            
             // تأخير صغير
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 1000));
             
             const audioUrl = `${RecordingUrl}.mp3`;
+            console.log('🎵 رابط الصوت:', audioUrl);
+            
             const audioResponse = await axios.get(audioUrl, {
                 responseType: 'arraybuffer',
                 auth: {
                     username: config.twilioAccountSid,
                     password: config.twilioAuthToken
                 },
-                timeout: 3000
+                timeout: 5000
             });
+            
+            console.log('✅ تم تحميل الصوت، حجم:', audioResponse.data.length, 'bytes');
             
             const formData = new FormData();
             formData.append('file', Buffer.from(audioResponse.data), {
@@ -726,7 +808,9 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
             });
             formData.append('model', 'whisper-1');
             formData.append('language', 'ar');
-            formData.append('prompt', 'مرحبا، موعد، سعر، شكرا، مع السلامة');
+            formData.append('prompt', 'مرحبا، السلام عليكم، موعد، سعر، موقع، شكرا، مع السلامة، كيف حالك، أهلا');
+            
+            console.log('🤖 إرسال إلى Whisper...');
             
             const whisperResponse = await axios.post(
                 'https://api.openai.com/v1/audio/transcriptions',
@@ -736,20 +820,33 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
                         'Authorization': `Bearer ${config.openaiApiKey}`,
                         ...formData.getHeaders()
                     },
-                    timeout: 3000
+                    timeout: 5000
                 }
             );
             
             text = whisperResponse.data.text || 'نعم';
-            console.log(`✅ Whisper: "${text}"`);
+            console.log(`✅ Whisper نجح: "${text}"`);
             
         } catch (error) {
-            console.log('⚠️ Whisper فشل، استخدام افتراضي');
+            console.log('⚠️ Whisper فشل:', error.message);
+            console.log('🔄 استخدام رد افتراضي:', text);
         }
+    } else {
+        console.log('⚠️ Whisper غير متاح أو رابط التسجيل مفقود');
     }
+    
+    console.log('⚡ بدء معالجة النص:', text);
     
     // معالجة سريعة
     await processUserInputFast(conversationId, text, res);
+});
+
+// ====================================
+// معالجة تحديثات حالة Twilio
+// ====================================
+app.post('/twilio/status', (req, res) => {
+    console.log('📊 تحديث حالة Twilio:', req.body);
+    res.status(200).send('OK');
 });
 
 // ====================================
@@ -817,7 +914,7 @@ app.get('/api/audio/:fileName', (req, res) => {
                 } catch (error) {
                     console.log(`⚠️ خطأ في حذف الملف: ${fileName}`);
                 }
-            }, 5000); // انتظار 5 ثوانٍ
+            }, 30000); // انتظار 30 ثانية بدلاً من 5
         });
     } else {
         res.status(404).send('ملف صوتي غير موجود');
