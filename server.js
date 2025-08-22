@@ -89,10 +89,17 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CREDENTIALS
             credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
         }
         
-        googleSpeech = new speech.SpeechClient({
-            credentials: credentials,
-            projectId: process.env.GOOGLE_PROJECT_ID
-        });
+        // إعداد Google Speech Client
+        if (credentials) {
+            // استخدام JSON credentials مباشرة
+            googleSpeech = new speech.SpeechClient({
+                credentials: credentials,
+                projectId: credentials.project_id
+            });
+        } else {
+            // استخدام ملف credentials (إذا كان متوفراً)
+            googleSpeech = new speech.SpeechClient();
+        }
         
         console.log('✅ Google Speech-to-Text جاهز');
     } catch (error) {
@@ -305,13 +312,13 @@ app.get('/', (req, res) => {
 // ====================================
 async function addTashkeel(text) {
     try {
-        // استخدام GPT-5o-mini للتشكيل الدقيق
+        // استخدام GPT-4o للتشكيل الدقيق
         if (openai) {
             console.log('🤖 استخدام GPT للتشكيل العربي...');
             
             const completion = await Promise.race([
                 openai.chat.completions.create({
-                    model: "gpt-5o-mini",
+                                                model: "gpt-4o",
                     messages: [
                         {
                             role: "system",
@@ -650,13 +657,13 @@ async function generateSSML(text, isArabic, emotion = 'friendly') {
             text = await addTashkeel(text);
         }
         
-        // استخدام GPT-5o-mini لصياغة SSML محسن
+        // استخدام GPT-4o لصياغة SSML محسن
         if (openai) {
             console.log('🤖 استخدام GPT لصياغة SSML...');
             
             const completion = await Promise.race([
                 openai.chat.completions.create({
-                    model: "gpt-5o-mini",
+                                                model: "gpt-4o",
                     messages: [
                         {
                             role: "system",
@@ -1381,7 +1388,7 @@ async function generateSmartResponse(text) {
             console.log(`🤖 استخدام GPT للرد على: "${text}"`);
                              const completion = await Promise.race([
                      openai.chat.completions.create({
-                         model: "gpt-5o-mini",
+                         model: "gpt-4o",
                          messages: [
                                                  { 
                              role: "system", 
@@ -1510,10 +1517,21 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
             console.log('🔄 محاولة Whisper...');
             
             // محاولة Whisper كبديل
-            if (openai) {
+            if (openai && RecordingUrl) {
                 try {
+                    // تحميل الصوت للـ Whisper
+                    const audioUrl = `${RecordingUrl}.mp3`;
+                    const whisperAudioResponse = await axios.get(audioUrl, {
+                        responseType: 'arraybuffer',
+                        auth: {
+                            username: config.twilioAccountSid,
+                            password: config.twilioAuthToken
+                        },
+                        timeout: 8000
+                    });
+                    
                     // تطبيق معالجة ما بعد التسجيل
-                    const processedAudio = await postProcessAudio(audioResponse.data);
+                    const processedAudio = await postProcessAudio(whisperAudioResponse.data);
                     console.log('🔧 تمت معالجة الصوت للـ Whisper');
                     
                     const formData = new FormData();
@@ -2004,8 +2022,8 @@ app.get('/api/info', (req, res) => {
             },
             output: {
                 elevenLabs: 'MP3 22.05kHz 64kbps',
-                ssml: 'GPT-5o-mini لصياغة SSML محسن',
-                tashkeel: 'GPT-5o-mini للتشكيل العربي الدقيق',
+                ssml: 'GPT-4o لصياغة SSML محسن',
+                tashkeel: 'GPT-4o للتشكيل العربي الدقيق',
                 processing: 'معطلة مؤقتاً لاستقرار النظام'
             },
             performance: {
@@ -2045,8 +2063,8 @@ app.listen(PORT, () => {
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
     console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps (معالجة معطلة مؤقتاً)');
     console.log('   🔧 المعالجة: معطلة مؤقتاً لاستقرار النظام');
-    console.log('   🤖 التشكيل: GPT-5o-mini للتشكيل العربي الدقيق');
-    console.log('   🎭 SSML: GPT-5o-mini لصياغة SSML محسن');
+    console.log('   🤖 التشكيل: GPT-4o للتشكيل العربي الدقيق');
+console.log('   🎭 SSML: GPT-4o لصياغة SSML محسن');
     console.log('=====================================');
     
     // تحذير إذا كانت المتغيرات مفقودة
