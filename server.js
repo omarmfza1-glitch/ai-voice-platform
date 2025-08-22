@@ -629,7 +629,13 @@ async function textToSpeechElevenLabs(text, language = 'ar', voiceId = null) {
         // تطبيق معالجة ما بعد التسجيل للإخراج TTS
         const processedAudioBuffer = await postProcessTTSOutput(audioBuffer);
         
-        fs.writeFileSync(filePath, processedAudioBuffer);
+        // التحقق من نجاح المعالجة
+        if (processedAudioBuffer.length > audioBuffer.length * 1.5) {
+            console.log('⚠️ المعالجة فشلت، استخدام الصوت الأصلي');
+            fs.writeFileSync(filePath, audioBuffer);
+        } else {
+            fs.writeFileSync(filePath, processedAudioBuffer);
+        }
         
         console.log(`✅ ElevenLabs: تم إنشاء الصوت "${fileName}" مع معالجة عالية الجودة`);
         
@@ -1295,13 +1301,15 @@ async function postProcessTTSOutput(audioBuffer) {
         
         // إعدادات معالجة TTS محسنة
         const ttsProcessing = {
-            enhanceClarity: true,      // تحسين الوضوح
+            enhanceClarity: false,     // إيقاف تحسين الوضوح مؤقتاً
             boostVolume: false,        // إيقاف رفع مستوى الصوت (يقلل الحجم)
-            normalizeAudio: true,      // تطبيع الصوت
+            normalizeAudio: false,     // إيقاف تطبيع الصوت مؤقتاً
             addWarmth: false,          // إيقاف إضافة دفء (يقلل الحجم)
-            optimizeForVoice: true,    // تحسين للصوت البشري
-            compressOutput: true       // ضغط المخرجات
+            optimizeForVoice: false,   // إيقاف تحسين للصوت البشري مؤقتاً
+            compressOutput: false      // إيقاف ضغط المخرجات مؤقتاً
         };
+        
+        console.log('⚠️ تم إيقاف معالجة TTS مؤقتاً لتجنب مشاكل الحجم');
         
         let processedBuffer = audioBuffer;
         
@@ -1332,7 +1340,15 @@ async function postProcessTTSOutput(audioBuffer) {
         console.log(`✅ تم الانتهاء من معالجة TTS عالية الجودة`);
         console.log(`📊 الحجم الأصلي: ${audioBuffer.length} bytes`);
         console.log(`📊 الحجم بعد المعالجة: ${processedBuffer.length} bytes`);
-        console.log(`📊 نسبة الضغط: ${((1 - processedBuffer.length / audioBuffer.length) * 100).toFixed(1)}%`);
+        
+        // التحقق من أن المعالجة قللت الحجم
+        if (processedBuffer.length > audioBuffer.length * 1.5) {
+            console.log('⚠️ تحذير: المعالجة زادت الحجم، إرجاع الصوت الأصلي');
+            return audioBuffer;
+        }
+        
+        const compressionRatio = ((1 - processedBuffer.length / audioBuffer.length) * 100).toFixed(1);
+        console.log(`📊 نسبة الضغط: ${compressionRatio}%`);
         
         return processedBuffer;
         
@@ -1480,42 +1496,50 @@ function applyVoiceOptimization(audioBuffer) {
 // دالة ضغط المخرجات لتقليل الحجم
 // ====================================
 function applyOutputCompression(audioBuffer) {
-    const samples = new Float32Array(audioBuffer);
-    
-    // تطبيق ضغط ذكي
-    const compressionFactor = 0.8; // ضغط بنسبة 20%
-    const threshold = 0.05; // عتبة الضغط
-    
-    for (let i = 0; i < samples.length; i++) {
-        const sample = samples[i];
+    try {
+        console.log('🗜️ بدء ضغط المخرجات...');
         
-        // تطبيق ضغط ديناميكي
-        if (Math.abs(sample) > threshold) {
-            // ضغط العينات الكبيرة
-            samples[i] = Math.sign(sample) * (threshold + (Math.abs(sample) - threshold) * compressionFactor);
-        } else {
+        // تحويل إلى عينات صوتية
+        const samples = new Int16Array(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.length / 2);
+        
+        // تطبيق ضغط ذكي
+        const compressionFactor = 0.7; // ضغط بنسبة 30%
+        const threshold = 0.1; // عتبة الضغط
+        
+        for (let i = 0; i < samples.length; i++) {
+            const sample = samples[i];
+            
+            // تطبيق ضغط ديناميكي
+            if (Math.abs(sample) > threshold * 32767) {
+                // ضغط العينات الكبيرة
+                samples[i] = Math.sign(sample) * Math.round((threshold * 32767 + (Math.abs(sample) - threshold * 32767) * compressionFactor));
+            }
             // الحفاظ على العينات الصغيرة
-            samples[i] = sample;
         }
         
-        // تقييد القيم
-        samples[i] = Math.max(-1, Math.min(1, samples[i]));
-    }
-    
-    // تقليل عدد العينات (downsampling) للحجم الكبير
-    if (samples.length > 1000000) { // إذا كان الحجم أكبر من 1MB
-        console.log('📉 تطبيق downsampling لتقليل الحجم...');
-        const downsampledSamples = [];
-        const skipFactor = 2; // تخطي كل عينة ثانية
-        
-        for (let i = 0; i < samples.length; i += skipFactor) {
-            downsampledSamples.push(samples[i]);
+        // تقليل عدد العينات (downsampling) للحجم الكبير
+        if (samples.length > 500000) { // إذا كان الحجم أكبر من 500KB
+            console.log('📉 تطبيق downsampling لتقليل الحجم...');
+            const downsampledSamples = [];
+            const skipFactor = 2; // تخطي كل عينة ثانية
+            
+            for (let i = 0; i < samples.length; i += skipFactor) {
+                downsampledSamples.push(samples[i]);
+            }
+            
+            const compressedBuffer = Buffer.from(new Int16Array(downsampledSamples).buffer);
+            console.log(`✅ تم الضغط: ${audioBuffer.length} → ${compressedBuffer.length} bytes`);
+            return compressedBuffer;
         }
         
-        return Buffer.from(new Float32Array(downsampledSamples).buffer);
+        const compressedBuffer = Buffer.from(samples.buffer);
+        console.log(`✅ تم الضغط: ${audioBuffer.length} → ${compressedBuffer.length} bytes`);
+        return compressedBuffer;
+        
+    } catch (error) {
+        console.error('❌ خطأ في ضغط المخرجات:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
     }
-    
-    return Buffer.from(samples.buffer);
 }
 
 // ====================================
