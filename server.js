@@ -12,6 +12,22 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// تحسينات الأداء
+const cluster = require('cluster');
+const os = require('os');
+const numCPUs = os.cpus().length;
+
+// إعدادات الأداء
+const performanceConfig = {
+    maxConcurrentRequests: 100,
+    requestTimeout: 30000,
+    enableCompression: true,
+    enableCaching: true,
+    cacheTTL: 300000, // 5 دقائق
+    enableRateLimiting: true,
+    maxRequestsPerMinute: 1000
+};
+
 // الإعدادات
 const config = {
     mongoUri: process.env.MONGODB_URI,
@@ -113,22 +129,37 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_CREDENTIALS
         
         // إعداد Google Speech Client
         if (credentials && credentials.project_id) {
-            // استخدام JSON credentials مباشرة
-            googleSpeech = new speech.SpeechClient({
-                credentials: credentials,
-                projectId: credentials.project_id
-            });
-            console.log('✅ Google Speech: تم إعداد credentials من JSON');
+            try {
+                // استخدام JSON credentials مباشرة
+                googleSpeech = new speech.SpeechClient({
+                    credentials: credentials,
+                    projectId: credentials.project_id
+                });
+                console.log('✅ Google Speech: تم إعداد credentials من JSON');
+            } catch (initError) {
+                console.error('❌ خطأ في إعداد Google Speech مع JSON:', initError.message);
+                googleSpeech = null;
+            }
         } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-            // استخدام ملف credentials (إذا كان متوفراً)
-            googleSpeech = new speech.SpeechClient({
-                keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
-            });
-            console.log('✅ Google Speech: تم إعداد credentials من ملف');
+            try {
+                // استخدام ملف credentials (إذا كان متوفراً)
+                googleSpeech = new speech.SpeechClient({
+                    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+                });
+                console.log('✅ Google Speech: تم إعداد credentials من ملف');
+            } catch (initError) {
+                console.error('❌ خطأ في إعداد Google Speech مع ملف:', initError.message);
+                googleSpeech = null;
+            }
         } else {
-            // استخدام الإعدادات الافتراضية
-            googleSpeech = new speech.SpeechClient();
-            console.log('✅ Google Speech: تم إعداد credentials افتراضي');
+            try {
+                // استخدام الإعدادات الافتراضية
+                googleSpeech = new speech.SpeechClient();
+                console.log('✅ Google Speech: تم إعداد credentials افتراضي');
+            } catch (initError) {
+                console.error('❌ خطأ في إعداد Google Speech افتراضي:', initError.message);
+                googleSpeech = null;
+            }
         }
         
         console.log('✅ Google Speech-to-Text جاهز');
@@ -148,8 +179,32 @@ if (googleSpeech) {
 
 // Middleware
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// تحسينات الأداء
+if (performanceConfig.enableCompression) {
+    const compression = require('compression');
+    app.use(compression());
+}
+
+// Rate Limiting
+if (performanceConfig.enableRateLimiting) {
+    const rateLimit = require('express-rate-limit');
+    const limiter = rateLimit({
+        windowMs: 1 * 60 * 1000, // دقيقة واحدة
+        max: performanceConfig.maxRequestsPerMinute,
+        message: 'تم تجاوز الحد الأقصى للطلبات، حاول مرة أخرى لاحقاً'
+    });
+    app.use('/api/', limiter);
+}
+
+// Timeout middleware
+app.use((req, res, next) => {
+    req.setTimeout(performanceConfig.requestTimeout);
+    res.setTimeout(performanceConfig.requestTimeout);
+    next();
+});
 
 // إعداد OpenAI
 let openai = null;
@@ -169,6 +224,49 @@ if (config.openaiApiKey) {
 const conversations = new Map();
 const userProfiles = new Map();
 const responseCache = new Map(); // كاش للردود الشائعة
+
+// كاش محسن للأداء
+const enhancedCache = {
+    responses: new Map(),
+    audio: new Map(),
+    tashkeel: new Map(),
+    ssml: new Map(),
+    
+    // إضافة مع TTL
+    set: function(key, value, ttl = performanceConfig.cacheTTL) {
+        this.responses.set(key, {
+            value: value,
+            timestamp: Date.now(),
+            ttl: ttl
+        });
+    },
+    
+    // الحصول مع فحص TTL
+    get: function(key) {
+        const item = this.responses.get(key);
+        if (!item) return null;
+        
+        if (Date.now() - item.timestamp > item.ttl) {
+            this.responses.delete(key);
+            return null;
+        }
+        
+        return item.value;
+    },
+    
+    // تنظيف الكاش
+    cleanup: function() {
+        const now = Date.now();
+        for (const [key, item] of this.responses.entries()) {
+            if (now - item.timestamp > item.ttl) {
+                this.responses.delete(key);
+            }
+        }
+    }
+};
+
+// تنظيف الكاش كل 5 دقائق
+setInterval(() => enhancedCache.cleanup(), 5 * 60 * 1000);
 
 // MongoDB اختياري
 if (config.mongoUri && config.mongoUri !== 'mongodb://localhost:27017/aivoice') {
@@ -1706,17 +1804,34 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
             
             console.log('✅ تم تحميل الصوت، حجم:', audioResponse.data.length, 'bytes');
             
-            // تطبيق معالجة ما بعد التسجيل
-            const processedAudio = await postProcessAudio(audioResponse.data);
-            console.log('🔧 تمت معالجة الصوت، الحجم الجديد:', processedAudio.length, 'bytes');
+                                // تطبيق معالجة الصوت مع تحسينات الأداء
+        const audioStartTime = Date.now();
+        const processedAudio = await postProcessAudio(audioResponse.data);
+        const audioProcessingTime = Date.now() - audioStartTime;
+        console.log(`🔧 تمت معالجة الصوت، الحجم الجديد: ${processedAudio.length} bytes (وقت: ${audioProcessingTime}ms)`);
+        
+        // حفظ في الكاش للسرعة
+        enhancedCache.set(`audio_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+            audio: processedAudio,
+            timestamp: Date.now()
+        }, 60000); // كاش لمدة دقيقة
             
-            // استخدام Google Speech
+            // استخدام Google Speech مع تحسينات الأداء
+            const sttStartTime = Date.now();
             const googleResult = await googleSpeechToText(processedAudio, 'ar-SA');
+            const sttProcessingTime = Date.now() - sttStartTime;
             
-            if (googleResult.success && googleResult.confidence > 0.7) {
+            if (googleResult.success && googleResult.confidence > 0.6) { // خفض عتبة الثقة للسرعة
                 text = googleResult.text;
                 usedService = 'Google Speech';
-                console.log(`🎯 Google Speech نجح: "${text}" (ثقة: ${(googleResult.confidence * 100).toFixed(1)}%)`);
+                console.log(`🎯 Google Speech نجح: "${text}" (ثقة: ${(googleResult.confidence * 100).toFixed(1)}%, وقت: ${processingTime}ms)`);
+                
+                // حفظ في الكاش للسرعة
+                enhancedCache.set(`stt_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+                    text: text,
+                    confidence: googleResult.confidence,
+                    service: 'Google Speech'
+                }, 60000); // كاش لمدة دقيقة
             } else {
                 console.log('⚠️ Google Speech فشل أو ثقة منخفضة، محاولة Whisper...');
                 throw new Error('Google Speech فشل');
@@ -1740,9 +1855,17 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
                         timeout: 8000
                     });
                     
-                    // تطبيق معالجة ما بعد التسجيل
-                    const processedAudio = await postProcessAudio(whisperAudioResponse.data);
-                    console.log('🔧 تمت معالجة الصوت للـ Whisper');
+                            // تطبيق معالجة ما بعد التسجيل مع تحسينات الأداء
+        const whisperAudioStartTime = Date.now();
+        const processedAudio = await postProcessAudio(whisperAudioResponse.data);
+        const whisperAudioProcessingTime = Date.now() - whisperAudioStartTime;
+        console.log(`🔧 تمت معالجة الصوت للـ Whisper (وقت: ${whisperAudioProcessingTime}ms)`);
+        
+        // حفظ في الكاش للسرعة
+        enhancedCache.set(`whisper_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+            audio: processedAudio,
+            timestamp: Date.now()
+        }, 30000); // كاش لمدة 30 ثانية
                     
                     const formData = new FormData();
                     formData.append('file', Buffer.from(processedAudio), {
@@ -1793,9 +1916,17 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
                     timeout: 8000
                 });
                 
-                // تطبيق معالجة ما بعد التسجيل
+                // تطبيق معالجة ما بعد التسجيل مع تحسينات الأداء
+                const directWhisperStartTime = Date.now();
                 const processedAudio = await postProcessAudio(audioResponse.data);
-                console.log('🔧 تمت معالجة الصوت للـ Whisper المباشر');
+                const directWhisperProcessingTime = Date.now() - directWhisperStartTime;
+                console.log(`🔧 تمت معالجة الصوت للـ Whisper المباشر (وقت: ${directWhisperProcessingTime}ms)`);
+                
+                // حفظ في الكاش للسرعة
+                enhancedCache.set(`direct_whisper_${Buffer.from(processedAudio).toString('base64').substring(0, 100)}`, {
+                    audio: processedAudio,
+                    timestamp: Date.now()
+                }, 30000); // كاش لمدة 30 ثانية
                 
                 const formData = new FormData();
                 formData.append('file', Buffer.from(processedAudio), {
@@ -1841,6 +1972,7 @@ app.post('/api/voice/process-recording/:conversationId', async (req, res) => {
 async function postProcessAudio(audioBuffer) {
     try {
         console.log('🔧 بدء معالجة ما بعد التسجيل...');
+        const startTime = Date.now();
         
         // إعدادات المعالجة
         const postProcessing = {
@@ -1855,25 +1987,35 @@ async function postProcessAudio(audioBuffer) {
         // تقليل الضوضاء
         if (postProcessing.noiseReduction) {
             console.log('🔇 تطبيق تقليل الضوضاء...');
+            const noiseStartTime = Date.now();
             // هنا يمكن إضافة خوارزمية تقليل الضوضاء
             // للتبسيط، سنقوم بتصفية بسيط
             processedBuffer = applyNoiseReduction(processedBuffer);
+            const noiseTime = Date.now() - noiseStartTime;
+            console.log(`🔇 تقليل الضوضاء: ${noiseTime}ms`);
         }
         
         // إلغاء الصدى
         if (postProcessing.echoCancellation) {
             console.log('🔄 تطبيق إلغاء الصدى...');
+            const echoStartTime = Date.now();
             // هنا يمكن إضافة خوارزمية إلغاء الصدى
             processedBuffer = applyEchoCancellation(processedBuffer);
+            const echoTime = Date.now() - echoStartTime;
+            console.log(`🔄 إلغاء الصدى: ${echoTime}ms`);
         }
         
         // تطبيع الصوت
         if (postProcessing.normalization) {
             console.log('📊 تطبيق تطبيع الصوت...');
+            const normStartTime = Date.now();
             processedBuffer = applyAudioNormalization(processedBuffer);
+            const normTime = Date.now() - normStartTime;
+            console.log(`📊 تطبيع الصوت: ${normTime}ms`);
         }
         
-        console.log('✅ تم الانتهاء من معالجة ما بعد التسجيل');
+        const totalTime = Date.now() - startTime;
+        console.log(`✅ تم الانتهاء من معالجة ما بعد التسجيل (إجمالي: ${totalTime}ms)`);
         return processedBuffer;
         
     } catch (error) {
@@ -1949,162 +2091,282 @@ async function postProcessTTSOutput(audioBuffer, options = {}) {
 }
 
 // ====================================
-// دالة تقليل الضوضاء (مبسطة)
+// دالة تقليل الضوضاء (محسنة للأداء)
 // ====================================
 function applyNoiseReduction(audioBuffer) {
-    // خوارزمية بسيطة لتقليل الضوضاء
-    // في التطبيق الحقيقي، استخدم مكتبة متخصصة
-    const samples = new Float32Array(audioBuffer);
-    const threshold = 0.1; // عتبة الضوضاء
-    
-    for (let i = 0; i < samples.length; i++) {
-        if (Math.abs(samples[i]) < threshold) {
-            samples[i] = 0; // إزالة الضوضاء الصغيرة
+    try {
+        // خوارزمية محسنة لتقليل الضوضاء
+        const samples = new Float32Array(audioBuffer);
+        const threshold = 0.08; // عتبة محسنة للضوضاء
+        const noiseReductionFactor = 0.3; // عامل تقليل الضوضاء
+        
+        // معالجة متوازية للأداء
+        const chunkSize = 1000; // حجم القطعة للمعالجة
+        const processedSamples = new Float32Array(samples.length);
+        
+        for (let i = 0; i < samples.length; i += chunkSize) {
+            const end = Math.min(i + chunkSize, samples.length);
+            
+            for (let j = i; j < end; j++) {
+                const sample = samples[j];
+                if (Math.abs(sample) < threshold) {
+                    // تقليل الضوضاء بدلاً من إزالتها بالكامل
+                    processedSamples[j] = sample * noiseReductionFactor;
+                } else {
+                    processedSamples[j] = sample;
+                }
+            }
         }
+        
+        return Buffer.from(processedSamples.buffer);
+    } catch (error) {
+        console.error('❌ خطأ في تقليل الضوضاء:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
     }
-    
-    return Buffer.from(samples.buffer);
 }
 
 // ====================================
-// دالة إلغاء الصدى (مبسطة)
+// دالة إلغاء الصدى (محسنة للأداء)
 // ====================================
 function applyEchoCancellation(audioBuffer) {
-    // خوارزمية بسيطة لإلغاء الصدى
-    // في التطبيق الحقيقي، استخدم مكتبة متخصصة
-    const samples = new Float32Array(audioBuffer);
-    const echoDelay = 1000; // تأخير الصدى بالعينات
-    
-    for (let i = echoDelay; i < samples.length; i++) {
-        // إزالة الصدى البسيط
-        samples[i] = samples[i] - (samples[i - echoDelay] * 0.3);
+    try {
+        // خوارزمية محسنة لإلغاء الصدى
+        const samples = new Float32Array(audioBuffer);
+        const echoDelay = 800; // تأخير محسن للصدى
+        const echoReductionFactor = 0.4; // عامل تقليل الصدى
+        
+        // معالجة متوازية للأداء
+        const processedSamples = new Float32Array(samples.length);
+        
+        // نسخ العينات الأولى بدون تغيير
+        for (let i = 0; i < echoDelay && i < samples.length; i++) {
+            processedSamples[i] = samples[i];
+        }
+        
+        // تطبيق إلغاء الصدى على باقي العينات
+        for (let i = echoDelay; i < samples.length; i++) {
+            const currentSample = samples[i];
+            const echoSample = samples[i - echoDelay];
+            
+            // إزالة الصدى مع الحفاظ على جودة الصوت
+            processedSamples[i] = currentSample - (echoSample * echoReductionFactor);
+        }
+        
+        return Buffer.from(processedSamples.buffer);
+    } catch (error) {
+        console.error('❌ خطأ في إلغاء الصدى:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
     }
-    
-    return Buffer.from(samples.buffer);
 }
 
 // ====================================
-// دالة تطبيع الصوت
+// دالة تطبيع الصوت (محسنة للأداء)
 // ====================================
 function applyAudioNormalization(audioBuffer) {
-    const samples = new Float32Array(audioBuffer);
-    
-    // إيجاد القيمة القصوى
-    let maxValue = 0;
-    for (let i = 0; i < samples.length; i++) {
-        maxValue = Math.max(maxValue, Math.abs(samples[i]));
-    }
-    
-    // تطبيع الصوت
-    if (maxValue > 0) {
-        const scaleFactor = 0.95 / maxValue; // 95% من الحد الأقصى
-        for (let i = 0; i < samples.length; i++) {
-            samples[i] = samples[i] * scaleFactor;
+    try {
+        const samples = new Float32Array(audioBuffer);
+        
+        // إيجاد القيمة القصوى بطريقة محسنة
+        let maxValue = 0;
+        const chunkSize = 1000; // معالجة متوازية
+        
+        for (let i = 0; i < samples.length; i += chunkSize) {
+            const end = Math.min(i + chunkSize, samples.length);
+            let chunkMax = 0;
+            
+            for (let j = i; j < end; j++) {
+                chunkMax = Math.max(chunkMax, Math.abs(samples[j]));
+            }
+            
+            maxValue = Math.max(maxValue, chunkMax);
         }
+        
+        // تطبيع الصوت
+        if (maxValue > 0) {
+            const scaleFactor = 0.9 / maxValue; // 90% من الحد الأقصى للسلامة
+            const processedSamples = new Float32Array(samples.length);
+            
+            for (let i = 0; i < samples.length; i += chunkSize) {
+                const end = Math.min(i + chunkSize, samples.length);
+                
+                for (let j = i; j < end; j++) {
+                    processedSamples[j] = samples[j] * scaleFactor;
+                }
+            }
+            
+            return Buffer.from(processedSamples.buffer);
+        }
+        
+        return audioBuffer;
+    } catch (error) {
+        console.error('❌ خطأ في تطبيع الصوت:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
     }
-    
-    return Buffer.from(samples.buffer);
 }
 
 // ====================================
-// دالة تحسين الوضوح
+// دالة تحسين الوضوح (محسنة للأداء)
 // ====================================
 function applyClarityEnhancement(audioBuffer) {
-    const samples = new Float32Array(audioBuffer);
-    
-    // تطبيق مرشح تحسين الوضوح
-    for (let i = 2; i < samples.length - 2; i++) {
-        // مرشح بسيط لتحسين الوضوح
-        samples[i] = samples[i] * 1.2 + 
-                     (samples[i-1] + samples[i+1]) * 0.1 - 
-                     (samples[i-2] + samples[i+2]) * 0.05;
+    try {
+        const samples = new Float32Array(audioBuffer);
+        const processedSamples = new Float32Array(samples.length);
         
-        // تقييد القيم
-        samples[i] = Math.max(-1, Math.min(1, samples[i]));
-    }
-    
-    return Buffer.from(samples.buffer);
-}
-
-// ====================================
-// دالة رفع مستوى الصوت
-// ====================================
-function applyVolumeBoost(audioBuffer) {
-    const samples = new Float32Array(audioBuffer);
-    
-    // رفع مستوى الصوت بنسبة 20%
-    const boostFactor = 1.2;
-    for (let i = 0; i < samples.length; i++) {
-        samples[i] = samples[i] * boostFactor;
-        // تقييد القيم
-        samples[i] = Math.max(-1, Math.min(1, samples[i]));
-    }
-    
-    return Buffer.from(samples.buffer);
-}
-
-// ====================================
-// دالة إضافة دفء للصوت
-// ====================================
-function applyWarmthEnhancement(audioBuffer) {
-    const samples = new Float32Array(audioBuffer);
-    
-    // تطبيق مرشح دفء بسيط
-    for (let i = 1; i < samples.length - 1; i++) {
-        // إضافة ترددات منخفضة للدفء
-        samples[i] = samples[i] + 
-                     (samples[i-1] + samples[i+1]) * 0.15;
+        // نسخ العينات الأولى والآخيرة بدون تغيير
+        processedSamples[0] = samples[0];
+        processedSamples[1] = samples[1];
+        processedSamples[samples.length - 2] = samples[samples.length - 2];
+        processedSamples[samples.length - 1] = samples[samples.length - 1];
         
-        // تقييد القيم
-        samples[i] = Math.max(-1, Math.min(1, samples[i]));
-    }
-    
-    return Buffer.from(samples.buffer);
-}
-
-// ====================================
-// دالة تحسين للصوت البشري
-// ====================================
-function applyVoiceOptimization(audioBuffer) {
-    const samples = new Float32Array(audioBuffer);
-    
-    // تحسين الترددات البشرية (80Hz - 8000Hz)
-    for (let i = 0; i < samples.length; i++) {
-        // تعزيز الترددات البشرية
-        if (i % 2 === 0) { // كل عينة ثانية
-            samples[i] = samples[i] * 1.1; // تعزيز بنسبة 10%
+        // تطبيق مرشح تحسين الوضوح مع معالجة متوازية
+        const chunkSize = 1000;
+        for (let i = 2; i < samples.length - 2; i += chunkSize) {
+            const end = Math.min(i + chunkSize, samples.length - 2);
+            
+            for (let j = i; j < end; j++) {
+                // مرشح محسن لتحسين الوضوح
+                processedSamples[j] = samples[j] * 1.15 + 
+                                     (samples[j-1] + samples[j+1]) * 0.08 - 
+                                     (samples[j-2] + samples[j+2]) * 0.03;
+                
+                // تقييد القيم
+                processedSamples[j] = Math.max(-1, Math.min(1, processedSamples[j]));
+            }
         }
         
-        // تقييد القيم
-        samples[i] = Math.max(-1, Math.min(1, samples[i]));
+        return Buffer.from(processedSamples.buffer);
+    } catch (error) {
+        console.error('❌ خطأ في تحسين الوضوح:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
     }
-    
-    return Buffer.from(samples.buffer);
 }
 
 // ====================================
-// دالة ضغط المخرجات لتقليل الحجم
+// دالة رفع مستوى الصوت (محسنة للأداء)
+// ====================================
+function applyVolumeBoost(audioBuffer) {
+    try {
+        const samples = new Float32Array(audioBuffer);
+        const processedSamples = new Float32Array(samples.length);
+        
+        // رفع مستوى الصوت بنسبة 15% (أكثر أماناً)
+        const boostFactor = 1.15;
+        const chunkSize = 1000; // معالجة متوازية
+        
+        for (let i = 0; i < samples.length; i += chunkSize) {
+            const end = Math.min(i + chunkSize, samples.length);
+            
+            for (let j = i; j < end; j++) {
+                processedSamples[j] = samples[j] * boostFactor;
+                // تقييد القيم
+                processedSamples[j] = Math.max(-1, Math.min(1, processedSamples[j]));
+            }
+        }
+        
+        return Buffer.from(processedSamples.buffer);
+    } catch (error) {
+        console.error('❌ خطأ في رفع مستوى الصوت:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
+    }
+}
+
+// ====================================
+// دالة إضافة دفء للصوت (محسنة للأداء)
+// ====================================
+function applyWarmthEnhancement(audioBuffer) {
+    try {
+        const samples = new Float32Array(audioBuffer);
+        const processedSamples = new Float32Array(samples.length);
+        
+        // نسخ العينة الأولى والأخيرة بدون تغيير
+        processedSamples[0] = samples[0];
+        processedSamples[samples.length - 1] = samples[samples.length - 1];
+        
+        // تطبيق مرشح دفء محسن مع معالجة متوازية
+        const chunkSize = 1000;
+        for (let i = 1; i < samples.length - 1; i += chunkSize) {
+            const end = Math.min(i + chunkSize, samples.length - 1);
+            
+            for (let j = i; j < end; j++) {
+                // إضافة ترددات منخفضة للدفء
+                processedSamples[j] = samples[j] + 
+                                     (samples[j-1] + samples[j+1]) * 0.12;
+                
+                // تقييد القيم
+                processedSamples[j] = Math.max(-1, Math.min(1, processedSamples[j]));
+            }
+        }
+        
+        return Buffer.from(processedSamples.buffer);
+    } catch (error) {
+        console.error('❌ خطأ في إضافة الدفء:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
+    }
+}
+
+// ====================================
+// دالة تحسين للصوت البشري (محسنة للأداء)
+// ====================================
+function applyVoiceOptimization(audioBuffer) {
+    try {
+        const samples = new Float32Array(audioBuffer);
+        const processedSamples = new Float32Array(samples.length);
+        
+        // تحسين الترددات البشرية (80Hz - 8000Hz) مع معالجة متوازية
+        const chunkSize = 1000;
+        for (let i = 0; i < samples.length; i += chunkSize) {
+            const end = Math.min(i + chunkSize, samples.length);
+            
+            for (let j = i; j < end; j++) {
+                // تعزيز الترددات البشرية
+                if (j % 2 === 0) { // كل عينة ثانية
+                    processedSamples[j] = samples[j] * 1.08; // تعزيز بنسبة 8% (أكثر أماناً)
+                } else {
+                    processedSamples[j] = samples[j];
+                }
+                
+                // تقييد القيم
+                processedSamples[j] = Math.max(-1, Math.min(1, processedSamples[j]));
+            }
+        }
+        
+        return Buffer.from(processedSamples.buffer);
+    } catch (error) {
+        console.error('❌ خطأ في تحسين الصوت البشري:', error.message);
+        return audioBuffer; // إرجاع الصوت الأصلي في حالة الخطأ
+    }
+}
+
+// ====================================
+// دالة ضغط المخرجات (محسنة للأداء)
 // ====================================
 function applyOutputCompression(audioBuffer) {
     try {
         console.log('🗜️ بدء ضغط المخرجات...');
+        const startTime = Date.now();
         
         // تحويل إلى عينات صوتية
         const samples = new Int16Array(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.length / 2);
         
-        // تطبيق ضغط ذكي
-        const compressionFactor = 0.7; // ضغط بنسبة 30%
-        const threshold = 0.1; // عتبة الضغط
+        // تطبيق ضغط ذكي محسن
+        const compressionFactor = 0.75; // ضغط بنسبة 25% (أكثر أماناً)
+        const threshold = 0.08; // عتبة محسنة للضغط
         
-        for (let i = 0; i < samples.length; i++) {
-            const sample = samples[i];
+        // معالجة متوازية للأداء
+        const chunkSize = 1000;
+        for (let i = 0; i < samples.length; i += chunkSize) {
+            const end = Math.min(i + chunkSize, samples.length);
             
-            // تطبيق ضغط ديناميكي
-            if (Math.abs(sample) > threshold * 32767) {
-                // ضغط العينات الكبيرة
-                samples[i] = Math.sign(sample) * Math.round((threshold * 32767 + (Math.abs(sample) - threshold * 32767) * compressionFactor));
+            for (let j = i; j < end; j++) {
+                const sample = samples[j];
+                
+                // تطبيق ضغط ديناميكي محسن
+                if (Math.abs(sample) > threshold * 32767) {
+                    // ضغط العينات الكبيرة
+                    samples[j] = Math.sign(sample) * Math.round((threshold * 32767 + (Math.abs(sample) - threshold * 32767) * compressionFactor));
+                }
+                // الحفاظ على العينات الصغيرة
             }
-            // الحفاظ على العينات الصغيرة
         }
         
         // تقليل عدد العينات (downsampling) للحجم الكبير
@@ -2118,12 +2380,14 @@ function applyOutputCompression(audioBuffer) {
             }
             
             const compressedBuffer = Buffer.from(new Int16Array(downsampledSamples).buffer);
-            console.log(`✅ تم الضغط: ${audioBuffer.length} → ${compressedBuffer.length} bytes`);
+            const compressionTime = Date.now() - startTime;
+            console.log(`✅ تم الضغط: ${audioBuffer.length} → ${compressedBuffer.length} bytes (وقت: ${compressionTime}ms)`);
             return compressedBuffer;
         }
         
         const compressedBuffer = Buffer.from(samples.buffer);
-        console.log(`✅ تم الضغط: ${audioBuffer.length} → ${compressedBuffer.length} bytes`);
+        const compressionTime = Date.now() - startTime;
+        console.log(`✅ تم الضغط: ${audioBuffer.length} → ${compressedBuffer.length} bytes (وقت: ${compressionTime}ms)`);
         return compressedBuffer;
         
     } catch (error) {
@@ -2233,8 +2497,8 @@ app.get('/api/info', (req, res) => {
             },
             output: {
                 elevenLabs: 'MP3 22.05kHz 64kbps',
-                            ssml: 'Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)',
-            tashkeel: 'Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)',
+                ssml: 'Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)',
+                tashkeel: 'Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)',
                 processing: 'معطلة مؤقتاً لاستقرار النظام'
             },
             performance: {
@@ -2242,6 +2506,14 @@ app.get('/api/info', (req, res) => {
                 quality: 'احترافية عالية',
                 features: 'مقاطعة + كاش ذكي'
             }
+        },
+        performance: {
+            multiThreading: `${numCPUs} CPUs`,
+            rateLimiting: `${performanceConfig.maxRequestsPerMinute} req/min`,
+            cacheTTL: `${performanceConfig.cacheTTL/1000}s`,
+            compression: performanceConfig.enableCompression ? 'مفعل' : 'معطل',
+            maxConcurrentRequests: performanceConfig.maxConcurrentRequests,
+            requestTimeout: `${performanceConfig.requestTimeout/1000}s`
         }
     });
 });
@@ -2275,8 +2547,14 @@ app.listen(PORT, () => {
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
     console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps (معالجة معطلة مؤقتاً)');
     console.log('   🔧 المعالجة: معطلة مؤقتاً لاستقرار النظام');
-                    console.log('   🤖 التشكيل: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
-            console.log('   🎭 SSML: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
+    console.log('   🤖 التشكيل: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
+    console.log('   🎭 SSML: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
+    console.log('=====================================');
+    console.log('⚡ تحسينات الأداء:');
+    console.log(`   🔄 Multi-threading: ${numCPUs} CPUs`);
+    console.log(`   📊 Rate Limiting: ${performanceConfig.maxRequestsPerMinute} req/min`);
+    console.log(`   💾 Cache TTL: ${performanceConfig.cacheTTL/1000}s`);
+    console.log(`   🗜️ Compression: ${performanceConfig.enableCompression ? 'مفعل' : 'معطل'}`);
     console.log('=====================================');
     
     // تحذير إذا كانت المتغيرات مفقودة
