@@ -49,6 +49,17 @@ heroku config:set OPENAI_API_KEY=your_openai_api_key
 heroku config:set ELEVENLABS_API_KEY=your_elevenlabs_api_key
 heroku config:set ELEVENLABS_VOICE_ID=your_voice_id
 
+# Mishkal (بديل Farasa للتشكيل العربي)
+heroku config:set ENABLE_MISHKAL=true
+heroku config:set MISHKAL_API_URL=http://localhost:8000/diacritize
+# أو إذا كان على Heroku:
+# heroku config:set MISHKAL_API_URL=https://your-mishkal-app.herokuapp.com/diacritize
+
+# Farasa (للتوافق مع الإعدادات القديمة)
+heroku config:set ENABLE_FARASA=true
+heroku config:set FARASA_API_KEY=your_farasa_api_key
+heroku config:set FARASA_API_URL=https://farasa.qcri.org/diacritize
+
 # قاعدة البيانات
 heroku config:set MONGODB_URI=your_mongodb_atlas_uri
 ```
@@ -142,6 +153,48 @@ heroku config:set OPENAI_API_KEY=sk-your-key-here
 heroku config:set ELEVENLABS_API_KEY=your_elevenlabs_key
 heroku config:set ELEVENLABS_VOICE_ID=your_voice_id
 ```
+
+## 📚 إعداد Mishkal (بديل Farasa للتشكيل العربي)
+
+### 1. تشغيل Mishkal محلياً (الأسهل)
+```bash
+# تثبيت Python
+pip install mishkal
+
+# تشغيل خادم محلي
+python -m mishkal.server --port 8000
+```
+
+### 2. استضافة Mishkal على Heroku (متقدم)
+- أنشئ تطبيق Heroku منفصل لـ Mishkal
+- ارفع ملف `mishkal-server.py`
+- احصل على URL التطبيق
+
+### 3. إضافة المفاتيح
+```bash
+heroku config:set ENABLE_MISHKAL=true
+heroku config:set MISHKAL_API_URL=http://localhost:8000/diacritize
+# أو إذا كان على Heroku:
+heroku config:set MISHKAL_API_URL=https://your-mishkal-app.herokuapp.com/diacritize
+```
+
+**ملاحظة مهمة**: Mishkal هو البديل الأفضل لـ Farasa وله الأولوية في النظام.
+
+## 🌙 إعداد Farasa (للتوافق مع الإعدادات القديمة)
+
+### 1. إنشاء حساب Farasa
+- اذهب إلى [https://farasa.qcri.org](https://farasa.qcri.org)
+- أنشئ حساب جديد
+- احصل على API Key
+
+### 2. إضافة المفاتيح
+```bash
+heroku config:set ENABLE_FARASA=true
+heroku config:set FARASA_API_KEY=your_farasa_api_key
+heroku config:set FARASA_API_URL=https://farasa.qcri.org/diacritize
+```
+
+**ملاحظة**: Farasa معطل حالياً، يفضل استخدام Camel Tools.
 
 ## 🗄️ إعداد MongoDB Atlas
 
@@ -302,6 +355,11 @@ heroku access:remove user@email.com
 | `OPENAI_API_KEY` | مفتاح API لـ OpenAI | `sk-1234567890abcdef...` |
 | `ELEVENLABS_API_KEY` | مفتاح API لـ ElevenLabs | `1234567890abcdef...` |
 | `ELEVENLABS_VOICE_ID` | معرف الصوت في ElevenLabs | `21m00Tcm4TlvDq8ikWAM` |
+| `ENABLE_MISHKAL` | تفعيل Mishkal للتشكيل العربي | `true` |
+| `MISHKAL_API_URL` | رابط Mishkal API | `http://localhost:8000/diacritize` |
+| `ENABLE_FARASA` | تفعيل Farasa للتشكيل العربي | `true` |
+| `FARASA_API_KEY` | مفتاح API لـ Farasa | `your_farasa_api_key` |
+| `FARASA_API_URL` | رابط Farasa API | `https://farasa.qcri.org/diacritize` |
 | `MONGODB_URI` | رابط قاعدة البيانات | `mongodb+srv://...` |
 
 **ملاحظة مهمة**: تأكد من عدم مشاركة المفاتيح الحساسة في GitHub أو أي مكان عام!

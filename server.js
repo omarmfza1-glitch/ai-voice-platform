@@ -160,6 +160,64 @@ if (googleSpeech) {
     console.log('⚠️ Google Speech-to-Text غير متصل (اختياري)');
 }
 
+// إعداد خدمات التشكيل العربي البديلة
+let diacritizationConfig = {
+    // Mishkal (بديل محلي - الأفضل حالياً)
+    mishkal: {
+        enabled: process.env.ENABLE_MISHKAL === 'true',
+        apiUrl: process.env.MISHKAL_API_URL || 'http://localhost:8000/diacritize',
+        apiKey: process.env.MISHKAL_API_KEY || null
+    },
+    // Tashkeel (بديل JavaScript)
+    tashkeel: {
+        enabled: process.env.ENABLE_TASHKEEL === 'true',
+        apiUrl: process.env.TASHKEEL_API_URL || 'http://localhost:3001/diacritize',
+        apiKey: process.env.TASHKEEL_API_KEY || null
+    },
+    // Farasa (للتوافق مع الإعدادات القديمة - معطل حالياً)
+    farasa: {
+        enabled: process.env.ENABLE_FARASA === 'true',
+        apiUrl: process.env.FARASA_API_URL || 'https://farasa.qcri.org/diacritize',
+        apiKey: process.env.FARASA_API_KEY || null
+    }
+};
+
+// فحص خدمات التشكيل المتاحة
+console.log('🔍 فحص خدمات التشكيل العربي المتاحة:');
+
+if (diacritizationConfig.mishkal.enabled) {
+    console.log('✅ Mishkal مفعل (الأفضل حالياً)');
+    if (diacritizationConfig.mishkal.apiKey) {
+        console.log('🔑 Mishkal API Key متوفر');
+    } else {
+        console.log('⚠️ Mishkal API Key غير متوفر');
+    }
+}
+
+if (diacritizationConfig.tashkeel.enabled) {
+    console.log('✅ Tashkeel مفعل');
+    if (diacritizationConfig.tashkeel.apiKey) {
+        console.log('🔑 Tashkeel API Key متوفر');
+    } else {
+        console.log('⚠️ Tashkeel API Key غير متوفر');
+    }
+}
+
+if (diacritizationConfig.farasa.enabled) {
+    console.log('✅ Farasa مفعل (للتوافق)');
+    if (diacritizationConfig.farasa.apiKey) {
+        console.log('🔑 Farasa API Key متوفر');
+    } else {
+        console.log('⚠️ Farasa API Key غير متوفر');
+    }
+}
+
+// التحقق من وجود خدمة واحدة على الأقل
+const hasDiacritizationService = Object.values(diacritizationConfig).some(service => service.enabled);
+if (!hasDiacritizationService) {
+    console.log('⚠️ لا توجد خدمة تشكيل مفعلة - سيتم استخدام Gemini فقط');
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -456,9 +514,235 @@ app.get('/', (req, res) => {
 // ====================================
 // دالة إضافة التشكيل للنص العربي باستخدام GPT - أعلى جودة
 // ====================================
+// ====================================
+// دوال التشكيل العربي البديلة
+// ====================================
+
+// دالة Camel Tools (بديل Farasa)
+async function camelToolsDiacritize(text) {
+    try {
+        if (!diacritizationConfig.camelTools.enabled) {
+            throw new Error('Camel Tools غير مفعل');
+        }
+        
+        console.log('🐪 إرسال إلى Camel Tools API...');
+        
+        const response = await axios.post(diacritizationConfig.camelTools.apiUrl, {
+            text: text,
+            api_key: diacritizationConfig.camelTools.apiKey
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': diacritizationConfig.camelTools.apiKey ? `Bearer ${diacritizationConfig.camelTools.apiKey}` : undefined
+            },
+            timeout: 10000
+        });
+        
+        if (response.data && response.data.diacritized_text) {
+            return {
+                success: true,
+                text: response.data.diacritized_text,
+                confidence: response.data.confidence || 0.9,
+                service: 'Camel Tools'
+            };
+        } else {
+            throw new Error('استجابة Camel Tools غير صحيحة');
+        }
+        
+    } catch (error) {
+        console.error('❌ خطأ Camel Tools:', error.message);
+        return {
+            success: false,
+            error: error.message,
+            service: 'Camel Tools'
+        };
+    }
+}
+
+// دالة Mishkal (بديل محلي)
+async function mishkalDiacritize(text) {
+    try {
+        if (!diacritizationConfig.mishkal.enabled) {
+            throw new Error('Mishkal غير مفعل');
+        }
+        
+        console.log('📚 إرسال إلى Mishkal API...');
+        const response = await axios.post(diacritizationConfig.mishkal.apiUrl, {
+            text: text,
+            api_key: diacritizationConfig.mishkal.apiKey
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': diacritizationConfig.mishkal.apiKey ? `Bearer ${diacritizationConfig.mishkal.apiKey}` : undefined
+            },
+            timeout: 10000
+        });
+        
+        if (response.data && response.data.diacritized_text) {
+            return {
+                success: true,
+                text: response.data.diacritized_text,
+                confidence: response.data.confidence || 0.85,
+                service: 'Mishkal'
+            };
+        } else {
+            throw new Error('استجابة Mishkal غير صحيحة');
+        }
+        
+    } catch (error) {
+        console.error('❌ خطأ Mishkal:', error.message);
+        return {
+            success: false,
+            error: error.message,
+            service: 'Mishkal'
+        };
+    }
+}
+
+// دالة Tashkeel (بديل JavaScript)
+async function tashkeelDiacritize(text) {
+    try {
+        if (!diacritizationConfig.tashkeel.enabled) {
+            throw new Error('Tashkeel غير مفعل');
+        }
+        
+        console.log('🎭 إرسال إلى Tashkeel API...');
+        
+        const response = await axios.post(diacritizationConfig.tashkeel.apiUrl, {
+            text: text,
+            api_key: diacritizationConfig.tashkeel.apiKey
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': diacritizationConfig.tashkeel.apiKey ? `Bearer ${diacritizationConfig.tashkeel.apiKey}` : undefined
+            },
+            timeout: 10000
+        });
+        
+        if (response.data && response.data.diacritized_text) {
+            return {
+                success: true,
+                text: response.data.diacritized_text,
+                confidence: response.data.confidence || 0.8,
+                service: 'Tashkeel'
+            };
+        } else {
+            throw new Error('استجابة Tashkeel غير صحيحة');
+        }
+        
+    } catch (error) {
+        console.error('❌ خطأ Tashkeel:', error.message);
+        return {
+            success: false,
+            error: error.message,
+            service: 'Tashkeel'
+        };
+    }
+}
+
+// دالة Farasa (للتوافق مع الإعدادات القديمة)
+async function farasaDiacritize(text) {
+    try {
+        if (!diacritizationConfig.farasa.enabled || !diacritizationConfig.farasa.apiKey) {
+            throw new Error('Farasa غير مفعل أو API Key غير متوفر');
+        }
+        
+        console.log('🌙 إرسال إلى Farasa API...');
+        
+        const response = await axios.post(diacritizationConfig.farasa.apiUrl, {
+            text: text,
+            api_key: diacritizationConfig.farasa.apiKey
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${diacritizationConfig.farasa.apiKey}`
+            },
+            timeout: 10000
+        });
+        
+        if (response.data && response.data.diacritized_text) {
+            return {
+                success: true,
+                text: response.data.diacritized_text,
+                confidence: response.data.confidence || 0.9,
+                service: 'Farasa'
+            };
+        } else {
+            throw new Error('استجابة Farasa غير صحيحة');
+        }
+        
+    } catch (error) {
+        console.error('❌ خطأ Farasa:', error.message);
+        return {
+            success: false,
+            error: error.message,
+            service: 'Farasa'
+        };
+    }
+}
+
+// ====================================
+// دالة التشكيل العربي - نظام متدرج مع بدائل متعددة
+// ====================================
 async function addTashkeel(text) {
     try {
-        // استخدام Gemini للتشكيل العربي (الأولوية)
+        // محاولة Camel Tools أولاً (بديل Farasa)
+        if (diacritizationConfig.camelTools.enabled) {
+            console.log('🐪 استخدام Camel Tools للتشكيل العربي...');
+            try {
+                const camelResult = await camelToolsDiacritize(text);
+                if (camelResult.success) {
+                    console.log(`✅ تم التشكيل باستخدام Camel Tools: "${text}" → "${camelResult.text}"`);
+                    return camelResult.text;
+                }
+            } catch (error) {
+                console.log('⚠️ Camel Tools فشل، محاولة Mishkal...');
+            }
+        }
+        
+        // محاولة Mishkal ثانياً
+        if (diacritizationConfig.mishkal.enabled) {
+            console.log('📚 استخدام Mishkal للتشكيل العربي...');
+            try {
+                const mishkalResult = await mishkalDiacritize(text);
+                if (mishkalResult.success) {
+                    console.log(`✅ تم التشكيل باستخدام Mishkal: "${text}" → "${mishkalResult.text}"`);
+                    return mishkalResult.text;
+                }
+            } catch (error) {
+                console.log('⚠️ Mishkal فشل، محاولة Tashkeel...');
+            }
+        }
+        
+        // محاولة Tashkeel ثالثاً
+        if (diacritizationConfig.tashkeel.enabled) {
+            console.log('🎭 استخدام Tashkeel للتشكيل العربي...');
+            try {
+                const tashkeelResult = await tashkeelDiacritize(text);
+                if (tashkeelResult.success) {
+                    console.log(`✅ تم التشكيل باستخدام Tashkeel: "${text}" → "${tashkeelResult.text}"`);
+                    return tashkeelResult.text;
+                }
+            } catch (error) {
+                console.log('⚠️ Tashkeel فشل، محاولة Farasa...');
+            }
+        }
+        
+        // محاولة Farasa رابعاً (للتوافق مع الإعدادات القديمة)
+        if (diacritizationConfig.farasa.enabled && diacritizationConfig.farasa.apiKey) {
+            console.log('🌙 استخدام Farasa للتشكيل العربي...');
+            try {
+                const farasaResult = await farasaDiacritize(text);
+                if (farasaResult.success) {
+                    console.log(`✅ تم التشكيل باستخدام Farasa: "${text}" → "${farasaResult.text}"`);
+                    return farasaResult.text;
+                }
+            } catch (error) {
+                console.log('⚠️ Farasa فشل، محاولة Gemini...');
+            }
+        }
+        
+        // استخدام Gemini للتشكيل العربي (البديل الأخير)
         if (geminiAI) {
             console.log('🌟 استخدام Gemini للتشكيل العربي...');
             
@@ -573,7 +857,7 @@ async function addTashkeel(text) {
         }
         
         // استخدام التشكيل الثابت كبديل إذا فشل كلاهما
-        console.log('⚠️ Gemini وGPT غير متاحان، استخدام التشكيل الثابت');
+        console.log('⚠️ جميع الخدمات فشلت، استخدام التشكيل الثابت');
         return addTashkeelFallback(text);
         
     } catch (error) {
@@ -2627,6 +2911,11 @@ app.get('/api/info', (req, res) => {
         elevenLabs: config.elevenLabsApiKey ? 'متصل' : 'غير متصل',
         openai: config.openaiApiKey ? 'متصل' : 'غير متصل',
         gemini: config.geminiApiKey ? 'متصل' : 'غير متصل',
+        // خدمات التشكيل العربي
+camelTools: diacritizationConfig.camelTools.enabled ? (diacritizationConfig.camelTools.apiKey ? 'متصل' : 'مفعل بدون API Key') : 'معطل',
+mishkal: diacritizationConfig.mishkal.enabled ? (diacritizationConfig.mishkal.apiKey ? 'متصل' : 'مفعل بدون API Key') : 'معطل',
+tashkeel: diacritizationConfig.tashkeel.enabled ? (diacritizationConfig.tashkeel.apiKey ? 'متصل' : 'مفعل بدون API Key') : 'معطل',
+farasa: diacritizationConfig.farasa.enabled ? (diacritizationConfig.farasa.apiKey ? 'متصل' : 'مفعل بدون API Key') : 'معطل',
         googleSpeech: googleSpeech ? 'متصل' : 'غير متصل',
         conversations: conversations.size,
         cacheSize: responseCache.size,
@@ -2689,8 +2978,8 @@ app.listen(PORT, () => {
     console.log('   🎤 الإدخال: WAV 48kHz ستيريو + معالجة متقدمة');
     console.log('   🎭 الإخراج: MP3 22.05kHz 64kbps (معالجة معطلة مؤقتاً)');
     console.log('   🔧 المعالجة: معطلة مؤقتاً لاستقرار النظام');
-    console.log('   🤖 التشكيل: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
-    console.log('   🎭 SSML: Gemini أولاً، ثم GPT-5 كبديل (بدون temperature)');
+    console.log('   🌙 التشكيل: Farasa أولاً، ثم Gemini، ثم GPT-5');
+    console.log('   🎭 SSML: Gemini أولاً، ثم GPT-5 كبديل');
     console.log('=====================================');
     console.log('⚡ تحسينات الأداء:');
     console.log(`   🔄 Multi-threading: ${numCPUs} CPUs`);
